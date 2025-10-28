@@ -1,4 +1,3 @@
-// app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
@@ -8,7 +7,7 @@ export async function POST(req: Request) {
   try {
     const { email, telegram } = await req.json().catch(() => ({} as any));
 
-    // Validate email
+    // ✅ Step 1: Basic email validation
     if (typeof email !== "string" || !EMAIL_RE.test(email)) {
       return NextResponse.json(
         { success: false, message: "Please enter a valid email." },
@@ -16,7 +15,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Best-effort dev log (no-op on Vercel)
+    // ✅ Step 2: Local log in development only (skipped in production)
     if (process.env.NODE_ENV !== "production") {
       try {
         const fs = await import("fs/promises");
@@ -25,12 +24,15 @@ export async function POST(req: Request) {
         await fs.mkdir(dataDir, { recursive: true });
         const file = path.join(dataDir, "subscribers.json");
         let arr: any[] = [];
-        try { arr = JSON.parse(await fs.readFile(file, "utf8")); } catch {}
+        try {
+          arr = JSON.parse(await fs.readFile(file, "utf8"));
+        } catch {}
         arr.push({ email, telegram: telegram || "", ts: new Date().toISOString() });
         await fs.writeFile(file, JSON.stringify(arr, null, 2), "utf8");
       } catch {}
     }
 
+    // ✅ Step 3: Check environment variable
     const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL;
     if (!GOOGLE_SCRIPT_URL) {
       return NextResponse.json(
@@ -39,7 +41,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Call Apps Script (its response type varies; we don’t rely on it)
+    // ✅ Step 4: Send data to Google Apps Script
     let status = 0;
     try {
       const r = await fetch(GOOGLE_SCRIPT_URL, {
@@ -51,21 +53,19 @@ export async function POST(req: Request) {
         next: { revalidate: 0 },
       });
       status = r.status;
-      // do not throw on non-2xx; Sheets already got the data if Apps Script accepted it
       await r.text().catch(() => "");
     } catch (e) {
-      // transport error — this is the only time we truly fail
       return NextResponse.json(
         { success: false, message: "Network error. Please try again." },
         { status: 502 }
       );
     }
 
-    // If we got here, we reached Apps Script. Treat as success regardless of exact status/body.
+    // ✅ Step 5: Treat any 2xx or redirect (302) as success
     return NextResponse.json({
       success: true,
       message: "Success — welcome aboard!",
-      relayStatus: status, // helpful in logs; ignored by UI
+      relayStatus: status,
     });
   } catch {
     return NextResponse.json(
