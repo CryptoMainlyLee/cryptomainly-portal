@@ -1,97 +1,82 @@
 import { NextResponse } from "next/server";
 
-// Force dynamic so Vercel won’t cache this route
-export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic"; // disable edge caching
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// get IP more reliably on Vercel
 function getClientIp(req: Request) {
   const h = req.headers;
   return (
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     h.get("x-real-ip") ||
     h.get("cf-connecting-ip") ||
-    h.get("x-client-ip") ||
+    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     "unknown"
-  );
-}
-
-function success() {
-  return new Response(
-    JSON.stringify({
-      success: true,
-      ok: true,
-      message: "Success! You’re on the list.",
-    }),
-    {
-      status: 200,
-      headers: {
-        "content-type": "application/json",
-        "cache-control": "no-store",
-      },
-    }
   );
 }
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({} as any));
-    const email: string = body?.email ?? "";
-    const telegram: string = body?.telegram ?? "";
+    const body = await req.json().catch(() => ({}));
+    const email: string = body.email || "";
+    const telegram: string = body.telegram || "";
+
+    // simple validation
     if (!EMAIL_RE.test(email)) {
       return NextResponse.json(
-        { success: false, ok: false, message: "Please enter a valid email." },
+        { success: false, message: "Please enter a valid email." },
         { status: 400 }
       );
     }
 
-    const ip = getClientIp(req);
-    const ts = new Date().toISOString();
-    const source = "CryptoMainly Portal";
-
-    // Send multiple key aliases so the Apps Script can match header text exactly
+    // compose the payload exactly as your Sheet headers expect
     const payload = {
-      // canonical
       Email: email,
       Telegram: telegram || "",
-      Source: source,
-      IP: ip,
-      Timestamp: ts,
-
-      // common alternatives (case/format variants)
-      email,
-      telegram,
-      source,
-      ip,
-      timestamp: ts,
-      "I.P": ip, // some sheets use a dotted header
-      "Ip": ip,
+      Source: "CryptoMainly Portal",
+      IP: getClientIp(req),
+      Timestamp: new Date().toISOString(),
     };
 
     const url = process.env.GOOGLE_SCRIPT_URL;
+
     if (url) {
       try {
-        await fetch(url, {
+        const res = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Cache-Control": "no-store",
           },
           body: JSON.stringify(payload),
-          redirect: "manual",
-        }).then(r => r.text()).catch(() => "");
+          redirect: "follow", // handle Apps Script 307 redirects properly
+        });
+
+        // log response text just for debugging (optional)
+        await res.text().catch(() => "");
       } catch (err) {
-        console.error("Apps Script request error:", err);
-        // We still return success to avoid showing “failed” to the user
+        console.warn("Google Script relay issue:", err);
       }
-    } else {
-      console.warn("GOOGLE_SCRIPT_URL not set — skipping relay");
     }
 
-    return success();
+    // always return success so the front-end never shows “failed”
+    return NextResponse.json(
+      {
+        success: true,
+        ok: true,
+        message: "Success! You’re on the list.",
+      },
+      { status: 200 }
+    );
   } catch (err) {
-    console.error("subscribe route fatal error:", err);
-    // Still show success so the button doesn’t display “failed”
-    return success();
+    console.error("Subscribe fatal error:", err);
+    return NextResponse.json(
+      {
+        success: true,
+        ok: true,
+        message:
+          "Subscription received! If you don’t get a welcome email, please try again later.",
+      },
+      { status: 200 }
+    );
   }
 }
