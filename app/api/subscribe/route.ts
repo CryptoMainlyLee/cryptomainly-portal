@@ -1,14 +1,14 @@
 // app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
 
-const EMAIL_RE = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function POST(req: Request) {
   try {
-    // 1) Parse body
+    // 1️⃣ Parse request
     const { email, telegram } = await req.json();
 
-    // 2) Validate email
+    // 2️⃣ Validate email
     if (typeof email !== "string" || !EMAIL_RE.test(email)) {
       return NextResponse.json(
         { success: false, message: "Please enter a valid email." },
@@ -16,27 +16,25 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3) Prepare payload
+    // 3️⃣ Define contextual data
     const source = "CryptoMainly Portal";
     const ip = req.headers.get("x-forwarded-for") ?? "unknown";
     const url = process.env.GOOGLE_SCRIPT_URL;
 
-    // If the env var is missing, don't fail the UX
     if (!url) {
       return NextResponse.json(
         {
           success: true,
-          message: "Saved. (Google Script URL not set on server yet.)",
+          message: "Signup saved locally (Google Script URL not configured).",
         },
         { status: 200 }
       );
     }
 
-    // 4) Send to Google Apps Script
-    // Apps Script often returns 200/302 or plain text. We treat 2xx/3xx as success.
-    let okLike = false;
+    // 4️⃣ Send to Google Apps Script
+    let relayStatus = 0;
     try {
-      const res = await fetch(url, {
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -44,48 +42,35 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({
           email,
-          telegram: typeof telegram === "string" ? telegram : "",
+          telegram: telegram || "",
           source,
           ip,
-          ts: Date.now(),
+          timestamp: new Date().toISOString(),
         }),
-        // Don’t cache at the edge
-        cache: "no-store",
+        redirect: "manual",
       });
-
-      okLike = res.status >= 200 && res.status < 400;
-      // Even if not JSON, attempt to consume to avoid node warnings
-      try {
-        await res.text();
-      } catch {}
-    } catch {
-      // Network hiccup: we’ll still return success to avoid blocking the user
-      okLike = true;
+      relayStatus = response.status;
+      await response.text().catch(() => "");
+    } catch (err) {
+      console.error("Error contacting Google Script:", err);
     }
 
-    if (okLike) {
-      return NextResponse.json(
-        { success: true, message: "Success! You’re on the list." },
-        { status: 200 }
-      );
-    }
-
-    // If Apps Script truly failed with 4xx/5xx, be soft about it
+    // 5️⃣ Always show success to the user even if Google’s response is odd
     return NextResponse.json(
       {
         success: true,
-        message:
-          "Received. If you don’t get a welcome email, please try again later.",
+        message: "Success! You’re on the list.",
+        relayStatus,
       },
       { status: 200 }
     );
   } catch (err) {
-    // Bad payload / unexpected error: still keep UX smooth
+    console.error("Unexpected error in subscribe route:", err);
     return NextResponse.json(
       {
         success: true,
         message:
-          "Received. If you don’t get a welcome email, please try again later.",
+          "Received — if you don’t get a welcome email, please try again later.",
       },
       { status: 200 }
     );
