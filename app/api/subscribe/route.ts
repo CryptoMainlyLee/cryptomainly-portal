@@ -1,70 +1,56 @@
-// app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
 
-// Force Node runtime and no caching
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-function resolveIp(req: Request, bodyIp?: string) {
-  const h = req.headers;
-  return (
-    (bodyIp || "").trim() ||
-    h.get("x-real-ip") ||
-    h.get("cf-connecting-ip") ||
-    h.get("x-vercel-proxy-ip") ||
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 
 export async function POST(req: Request) {
+  // Default response: success (we never show failure)
+  let response = NextResponse.json({ success: true });
+
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      email?: string;
-      telegram?: string;
-      ip?: string;
-      source?: string;
-    };
+    const { email, telegram, source } = await req.json();
 
-    const email = (body.email || "").trim();
-    const telegram = (body.telegram || "").trim();
-    const ip = resolveIp(req, body.ip);
-    const source = (body.source || "CryptoMainly Portal").trim();
-    const timestamp = new Date().toISOString();
+    // Try to gather IP from Vercel forward header
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "";
 
-    // Payload with multiple key aliases (to match Sheets/App Script mappings)
-    const payload: Record<string, string> = {
-      Email: email,
-      Telegram: telegram,
-      Source: source,
-      source,
-      IP: ip,
-      ip,
-      Timestamp: timestamp,
-    };
-
-    const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
-
-    if (scriptUrl) {
-      // Fire-and-forget — DO NOT block UX no matter what
-      fetch(scriptUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-        body: JSON.stringify(payload),
-        redirect: "follow",
-      }).then(r => r.text().catch(() => "")).catch(() => {});
+    // Soft validation: only skip the network call if email is empty
+    if (!email || typeof email !== "string" || !EMAIL_RE.test(email)) {
+      // still return success to the client
+      return response;
     }
 
-    // ALWAYS return success to the client
-    return NextResponse.json(
-      { success: true, ok: true, message: "Success / Subscribed" },
-      { status: 200, headers: { "cache-control": "no-store" } }
-    );
+    // Prefer env var if present; otherwise fall back to a hardcoded URL (optional)
+    const url =
+      process.env.GOOGLE_SCRIPT_URL ??
+      ""; // keep empty if you only use the env var on Vercel
+
+    if (!url) {
+      // No URL configured in this environment — still succeed to the user
+      return response;
+    }
+
+    // Best-effort relay to Google Apps Script
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Your Sheet expects Email, Telegram, Source, IP, Timestamp is added in Apps Script
+      body: JSON.stringify({
+        email,
+        telegram: telegram ?? "",
+        source: source ?? "CryptoMainly Portal",
+        ip,
+      }),
+      // Avoid throwing the whole route on fetch aborts/timeouts
+      cache: "no-store",
+    }).catch(() => {
+      /* ignore */
+    });
+
+    return response;
   } catch {
-    // STILL return success — never surface an error
-    return NextResponse.json(
-      { success: true, ok: true, message: "Success / Subscribed" },
-      { status: 200, headers: { "cache-control": "no-store" } }
-    );
+    // Never surface failure
+    return response;
   }
 }

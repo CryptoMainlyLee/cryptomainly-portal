@@ -1,82 +1,101 @@
 "use client";
-import React, { useState } from "react";
+
+import { useState } from "react";
+
+type Status = "idle" | "success";
 
 export default function EmailCapture() {
   const [email, setEmail] = useState("");
   const [telegram, setTelegram] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [status, setStatus] = useState<Status>("idle");
 
-  const onSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
 
-    // Get client IP best-effort (don’t block if it fails)
-    let clientIp = "";
-    try {
-      const resp = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
-      const j = await resp.json();
-      clientIp = j?.ip || "";
-    } catch {
-      clientIp = "";
-    }
+    // Instantly show success to the user (no matter what).
+    setStatus("success");
 
-    // Fire the request — but show SUCCESS regardless of response
+    // Fire-and-forget the actual network call.
     try {
-      await fetch("/api/subscribe", {
+      const payload = {
+        email,
+        telegram,
+        source: "CryptoMainly Portal",
+      };
+
+      // keepalive means the request will still try to complete if the user navigates
+      fetch("/api/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          telegram,
-          ip: clientIp,
-          source: "CryptoMainly Portal",
-        }),
-      }).catch(() => {});
-    } finally {
-      setLoading(false);
-      setMessage("Success / Subscribed");
-      setEmail("");
-      setTelegram("");
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        /* swallow */
+      });
+    } catch {
+      /* swallow */
     }
-  };
+
+    // optional: clear the fields
+    setEmail("");
+    setTelegram("");
+    setConsent(false);
+  }
 
   return (
-    <div className="bg-[#0a0a0a]/80 backdrop-blur-md border border-[#222] rounded-2xl p-5 mt-6 mx-auto max-w-md text-center shadow-lg">
-      <h2 className="text-xl font-bold text-white mb-2">📩 Get Updates</h2>
-      <p className="text-gray-400 mb-4 text-sm">
-        Join the CryptoMainly list for new features and VIP news.
-      </p>
+    <form
+      onSubmit={handleSubmit}
+      className="rounded-2xl border border-neutral-700/60 bg-neutral-900/40 p-4 md:p-5"
+    >
+      <h3 className="text-lg font-semibold mb-3">Stay updated — free insights</h3>
 
-      <form onSubmit={onSubmit} className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
         <input
-          type="text" // deliberately not "email" so no browser validation blocks
-          placeholder="Your email"
+          type="email"
+          required
+          placeholder="you@email.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="w-full p-3 rounded-lg bg-[#111] text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400 transition"
+          className="w-full rounded-md bg-neutral-800/60 px-3 py-2 outline-none"
         />
+
         <input
           type="text"
-          placeholder="Telegram username (optional)"
+          placeholder="Telegram (optional)"
           value={telegram}
           onChange={(e) => setTelegram(e.target.value)}
-          className="w-full p-3 rounded-lg bg-[#111] text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400 transition"
+          className="w-full rounded-md bg-neutral-800/60 px-3 py-2 outline-none"
         />
+      </div>
 
+      <label className="mt-3 flex items-center gap-2 text-sm opacity-80">
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={(e) => setConsent(e.target.checked)}
+          required
+        />
+        I agree to receive updates, see the privacy notice.
+      </label>
+
+      <div className="mt-3 flex items-center gap-3">
         <button
           type="submit"
-          disabled={loading}
-          className={`w-full py-3 rounded-lg font-semibold transition 
-            ${loading ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-yellow-500 hover:bg-yellow-400 text-black shadow-md"}`}
+          disabled={!consent || !email}
+          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold hover:bg-emerald-500 disabled:opacity-40"
         >
-          {loading ? "Submitting..." : "Get Updates"}
+          Get updates
         </button>
-      </form>
 
-      {message && (
-        <p className="mt-3 text-sm text-green-400">{message}</p>
-      )}
-    </div>
+        {status === "success" && (
+          <span className="text-emerald-400 text-sm">Success — welcome aboard!</span>
+        )}
+      </div>
+
+      <p className="mt-3 text-xs opacity-70">
+        Tip: include your Telegram username to receive VIP offer pings and market alerts first.
+      </p>
+    </form>
   );
 }
