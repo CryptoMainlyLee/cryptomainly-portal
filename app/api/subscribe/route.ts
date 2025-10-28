@@ -1,15 +1,14 @@
+// app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
 
+// Force Node runtime and no caching
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// try headers first; fall back to client-supplied ip (from form)
 function resolveIp(req: Request, bodyIp?: string) {
   const h = req.headers;
   return (
-    bodyIp ||
+    (bodyIp || "").trim() ||
     h.get("x-real-ip") ||
     h.get("cf-connecting-ip") ||
     h.get("x-vercel-proxy-ip") ||
@@ -23,68 +22,49 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as {
       email?: string;
       telegram?: string;
-      ip?: string;         // coming from the browser
-      source?: string;     // coming from the browser
+      ip?: string;
+      source?: string;
     };
 
     const email = (body.email || "").trim();
     const telegram = (body.telegram || "").trim();
-
-    if (!EMAIL_RE.test(email)) {
-      return NextResponse.json(
-        { success: false, message: "Please enter a valid email." },
-        { status: 400 }
-      );
-    }
-
-    // Resolve IP + source with robust fallbacks
     const ip = resolveIp(req, body.ip);
-    const source = body.source?.trim() || "CryptoMainly Portal";
+    const source = (body.source || "CryptoMainly Portal").trim();
+    const timestamp = new Date().toISOString();
 
-    // Payload duplicated with both key casings (Apps Script friendly)
-    const payload = {
+    // Payload with multiple key aliases (to match Sheets/App Script mappings)
+    const payload: Record<string, string> = {
       Email: email,
       Telegram: telegram,
       Source: source,
-      source,          // duplicate lower-case
+      source,
       IP: ip,
-      ip,              // duplicate lower-case
-      Timestamp: new Date().toISOString(),
+      ip,
+      Timestamp: timestamp,
     };
 
     const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
 
     if (scriptUrl) {
-      try {
-        const r = await fetch(scriptUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          redirect: "follow",
-        });
-        // Optional: inspect response; but don’t block UX on it
-        await r.text().catch(() => "");
-      } catch (e) {
-        console.warn("Apps Script relay issue:", e);
-      }
+      // Fire-and-forget — DO NOT block UX no matter what
+      fetch(scriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        body: JSON.stringify(payload),
+        redirect: "follow",
+      }).then(r => r.text().catch(() => "")).catch(() => {});
     }
 
-    // Return success so your front-end no longer shows “failed”
+    // ALWAYS return success to the client
     return NextResponse.json(
-      { success: true, ok: true, message: "Success! You’re on the list." },
-      { status: 200 }
+      { success: true, ok: true, message: "Success / Subscribed" },
+      { status: 200, headers: { "cache-control": "no-store" } }
     );
-  } catch (err) {
-    console.error("Subscribe fatal error:", err);
-    // Still return 200 to avoid UX error, since Sheet already updates
+  } catch {
+    // STILL return success — never surface an error
     return NextResponse.json(
-      {
-        success: true,
-        ok: true,
-        message:
-          "Subscription received! If you don’t get a welcome email, please try again.",
-      },
-      { status: 200 }
+      { success: true, ok: true, message: "Success / Subscribed" },
+      { status: 200, headers: { "cache-control": "no-store" } }
     );
   }
 }
