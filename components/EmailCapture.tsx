@@ -9,26 +9,38 @@ export default function EmailCapture() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;           // prevent double-click spam
     setLoading(true);
+    setMessage(null);
 
-    // Always show success to the user (don’t block UX on network)
+    // Always show success immediately
+    setMessage("Success / Subscribed");
+
+    // Best-effort: collect client IP (don’t block UX if it fails)
+    let clientIp = "";
     try {
-      fetch("/api/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          telegram,
-          source: "CryptoMainly Portal",
-        }),
-        keepalive: true,
-      }).catch(() => {});
-    } finally {
-      setLoading(false);
-      setMessage("Success / Subscribed");
-      setEmail("");
-      setTelegram("");
-    }
+      const r = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
+      const j = await r.json();
+      clientIp = j?.ip || "";
+    } catch { /* ignore */ }
+
+    // Fire-and-forget the actual send; we don't parse the response
+    fetch("/api/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        telegram,
+        source: "CryptoMainly Portal",
+        ip: clientIp,
+      }),
+      keepalive: true,
+    }).catch(() => { /* ignore */ });
+
+    // Clear inputs and release the button
+    setEmail("");
+    setTelegram("");
+    setLoading(false);
   };
 
   return (
@@ -40,7 +52,7 @@ export default function EmailCapture() {
 
       <form onSubmit={onSubmit} className="space-y-3">
         <input
-          type="text"
+          type="text"                      // keep text so browser validation never blocks
           placeholder="Your email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
