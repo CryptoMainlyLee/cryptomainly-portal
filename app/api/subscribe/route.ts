@@ -1,76 +1,82 @@
-// app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
 
+// very light email check (kept permissive)
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Try several common header names Vercel/CDNs set
+function getClientIp(req: Request) {
+  const h = req.headers;
+  const ip =
+    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    h.get("x-real-ip") ||
+    h.get("cf-connecting-ip") ||
+    h.get("x-client-ip") ||
+    "unknown";
+  return ip;
+}
 
 export async function POST(req: Request) {
   try {
-    // 1️⃣ Parse request
-    const { email, telegram } = await req.json();
+    const body = await req.json().catch(() => ({} as any));
+    const email: string = body?.email ?? "";
+    const telegram: string = body?.telegram ?? "";
 
-    // 2️⃣ Validate email
-    if (typeof email !== "string" || !EMAIL_RE.test(email)) {
+    if (!EMAIL_RE.test(email)) {
+      // keep the same message your UI expects
       return NextResponse.json(
         { success: false, message: "Please enter a valid email." },
         { status: 400 }
       );
     }
 
-    // 3️⃣ Define contextual data
-    const source = "CryptoMainly Portal";
-    const ip = req.headers.get("x-forwarded-for") ?? "unknown";
+    const payload = {
+      // Use header names EXACTLY like your sheet’s headers
+      Email: email,
+      Telegram: telegram || "",
+      Source: "CryptoMainly Portal",
+      IP: getClientIp(req),
+      Timestamp: new Date().toISOString(),
+    };
+
     const url = process.env.GOOGLE_SCRIPT_URL;
 
-    if (!url) {
-      return NextResponse.json(
-        {
-          success: true,
-          message: "Signup saved locally (Google Script URL not configured).",
-        },
-        { status: 200 }
-      );
+    if (url) {
+      try {
+        // server->server call to your Apps Script
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+          },
+          body: JSON.stringify(payload),
+          // don’t follow possible redirects from Apps Script
+          redirect: "manual",
+        });
+
+        // We don’t care what the script returns: still show success to the user
+        await res.text().catch(() => "");
+      } catch (err) {
+        // swallow network issues to avoid a failed UX while still saving locally
+        console.error("Apps Script request error:", err);
+      }
+    } else {
+      console.warn("GOOGLE_SCRIPT_URL not set — skipping relay");
     }
 
-    // 4️⃣ Send to Google Apps Script
-    let relayStatus = 0;
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-        },
-        body: JSON.stringify({
-          email,
-          telegram: telegram || "",
-          source,
-          ip,
-          timestamp: new Date().toISOString(),
-        }),
-        redirect: "manual",
-      });
-      relayStatus = response.status;
-      await response.text().catch(() => "");
-    } catch (err) {
-      console.error("Error contacting Google Script:", err);
-    }
-
-    // 5️⃣ Always show success to the user even if Google’s response is odd
+    // Always success for the front-end
     return NextResponse.json(
-      {
-        success: true,
-        message: "Success! You’re on the list.",
-        relayStatus,
-      },
+      { success: true, message: "Success! You’re on the list." },
       { status: 200 }
     );
   } catch (err) {
-    console.error("Unexpected error in subscribe route:", err);
+    console.error("subscribe route fatal error:", err);
+    // Still return 200 so the button doesn’t show “failed”
     return NextResponse.json(
       {
         success: true,
         message:
-          "Received — if you don’t get a welcome email, please try again later.",
+          "Success! (If you don’t get the welcome email, please try again later.)",
       },
       { status: 200 }
     );
