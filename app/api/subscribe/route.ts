@@ -1,55 +1,51 @@
+// app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
-import { headers as nextHeaders } from "next/headers";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
+const EMAIL_RE =
+  /^(?!\.)[A-Za-z0-9._%+-]+@(?!-)(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$/;
 
-// Always return success to the browser; do not block UX on Sheets write.
 export async function POST(req: Request) {
-  const ok = NextResponse.json({ success: true });
-
   try {
-    // 1) Read JSON from client (email + optional telegram)
-    const { email, telegram, source: clientSource } = await req.json();
+    // 1) Parse JSON
+    const { email, telegram } = await req.json();
 
-    // 2) Derive IP robustly on Vercel via next/headers (works behind proxy/edge)
-    const h = nextHeaders();
-    const fwd = h.get("x-forwarded-for") || "";
+    const emailStr = (email ?? "").toString().trim();
+    const telegramStr = (telegram ?? "").toString().trim();
+
+    // 2) Build source + best-effort IP for Vercel/Proxies
+    const source = "CryptoMainly Portal";
     const ip =
-      (fwd && fwd.split(",")[0].trim()) ||
-      h.get("x-real-ip") ||
-      h.get("cf-connecting-ip") ||
-      "";
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
 
-    // 3) Soft email check; still return success either way
-    if (!email || typeof email !== "string" || !EMAIL_RE.test(email)) {
-      return ok;
+    // 3) Push to Google Apps Script (never throws out of the handler)
+    const url = process.env.GOOGLE_SCRIPT_URL;
+    if (url) {
+      try {
+        await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: emailStr, telegram: telegramStr, source, ip }),
+          // Vercel edge/proxy is fine with default caching; no-cors not required
+        });
+      } catch (err) {
+        console.error("Sheets relay error:", err);
+      }
+    } else {
+      console.error("GOOGLE_SCRIPT_URL is not set");
     }
 
-    // 4) Post to Google Apps Script (URL from env var)
-    const scriptUrl = process.env.GOOGLE_SCRIPT_URL || "";
-    if (!scriptUrl) return ok;
-
-    const payload = {
-      email,
-      telegram: typeof telegram === "string" ? telegram : "",
-      // ✅ GUARANTEE these fields are sent (Sheet columns: Email | Telegram | Source | IP | Timestamp)
-      source: clientSource && typeof clientSource === "string"
-        ? clientSource
-        : "CryptoMainly Portal",
-      ip, // may be empty if headers don’t include an address, but the key is always present
-    };
-
-    // Best-effort relay; ignore response shape/redirects
-    await fetch(scriptUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-      keepalive: true,
-    }).catch(() => { /* swallow network errors */ });
-
-    return ok;
-  } catch {
-    return ok;
+    // 4) Always respond OK so the UI never shows “failed”
+    //    (We can still hint to the client if the email looked bad, but status is 200)
+    const emailLooksValid = EMAIL_RE.test(emailStr);
+    return NextResponse.json({
+      ok: true,
+      emailValid: emailLooksValid,
+    });
+  } catch (err) {
+    console.error("subscribe route crash:", err);
+    // Still return ok to keep UI happy
+    return NextResponse.json({ ok: true });
   }
 }
