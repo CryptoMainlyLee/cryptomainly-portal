@@ -94,7 +94,7 @@ export default function EmailCapture() {
       </div>
 
       <p className="mt-3 text-xs opacity-70">
-        Tip: include your Telegram username to receive VIP offer pings and market alerts first.
+        Top Tip: include your Telegram username to be added to CryptoMainly exclusive Telegram groups.  Receive VIP offer pings and market alerts first.
       </p>
     </form>
   );
