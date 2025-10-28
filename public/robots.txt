@@ -1,0 +1,22 @@
+# CryptoMainly Robots.txt
+# This file tells search engines what they can crawl and index
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /_next/
+Disallow: /private/
+Disallow: /admin/
+
+# Sitemap location
+Sitemap: https://cryptomainly.co.uk/sitemap.xml
+
+# Additional guidance for major crawlers
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Slurp
+Allow: /

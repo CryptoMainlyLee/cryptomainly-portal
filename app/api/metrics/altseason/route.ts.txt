@@ -1,0 +1,91 @@
+// app/api/metrics/altseason/route.ts
+import { NextResponse } from "next/server";
+
+export const revalidate = 300;
+
+async function tryFetch(url: string) {
+  const res = await fetch(url, { next: { revalidate } });
+  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+  return res.json();
+}
+
+function coerceIndex(json: any): number | null {
+  // Tolerant parser — handles a few known shapes and falls back if needed
+  if (!json) return null;
+
+  // Direct numeric
+  if (typeof json === "number") return Math.max(0, Math.min(100, json));
+
+  // Common keys used in the wild
+  const candidates = [
+    json.altseason,
+    json.altSeason,
+    json.altcoinSeasonIndex,
+    json.seasonIndex,
+    json.value,
+    json.index,
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === "number") return Math.max(0, Math.min(100, c));
+    const n = Number(c);
+    if (!Number.isNaN(n)) return Math.max(0, Math.min(100, n));
+  }
+
+  // Sometimes wrapped
+  if (json?.data) return coerceIndex(json.data);
+
+  return null;
+}
+
+export async function GET() {
+  try {
+    // Try a couple of known endpoints (one of these is usually up)
+    const urls = [
+      "https://api2.blockchaincenter.net/altseason",
+      "https://api.blockchaincenter.net/altseason",
+    ];
+
+    let idx: number | null = null;
+    let raw: any = null;
+
+    for (const u of urls) {
+      try {
+        raw = await tryFetch(u);
+        idx = coerceIndex(raw);
+        if (idx !== null) break;
+      } catch {
+        // keep looping
+      }
+    }
+
+    if (idx === null) {
+      // Graceful fallback
+      idx = 50;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      value: idx,
+      label:
+        idx < 35
+          ? "Bitcoin Season"
+          : idx < 65
+          ? "Neutral"
+          : "Altcoin Season",
+      source: "blockchaincenter.net",
+      raw,
+    });
+  } catch (err: any) {
+    return NextResponse.json(
+      {
+        ok: false,
+        value: 50,
+        label: "Neutral",
+        source: "blockchaincenter.net",
+        error: err?.message ?? "unknown",
+      },
+      { status: 200 }
+    );
+  }
+}

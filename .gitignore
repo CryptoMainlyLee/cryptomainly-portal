@@ -1,0 +1,28 @@
+﻿# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env & secrets
+.env
+.env.*
+
+# Editors/OS
+.vscode/
+.vs/
+.DS_Store
+Thumbs.db
+
+# App data (keep folder, ignore local JSON signup storage)
+data/
+!data/.gitkeep
+
+# Public builds (allow these two SEO files)
+!/public/robots.txt
+!/public/sitemap.xml
