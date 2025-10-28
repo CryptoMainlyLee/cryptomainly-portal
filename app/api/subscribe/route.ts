@@ -1,56 +1,63 @@
 import { NextResponse } from "next/server";
+import { headers as nextHeaders } from "next/headers";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 
+// Always return success to the browser; we don't block on Sheets.
 export async function POST(req: Request) {
-  // Default response: success (we never show failure)
-  let response = NextResponse.json({ success: true });
+  // Show success to user no matter what.
+  const ok = NextResponse.json({ success: true });
 
   try {
-    const { email, telegram, source } = await req.json();
+    // 1) Read JSON from client
+    const { email, telegram, source: clientSource } = await req.json();
 
-    // Try to gather IP from Vercel forward header
+    // 2) Derive IP as robustly as possible on Vercel
+    //    Using next/headers() is the most reliable way behind the edge/runtime.
+    const h = nextHeaders();
+    const fwd = h.get("x-forwarded-for") || "";
+    const real = h.get("x-real-ip") || "";
+    const cf = h.get("cf-connecting-ip") || "";
     const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      req.headers.get("x-real-ip") ||
+      (fwd && fwd.split(",")[0].trim()) ||
+      real ||
+      cf ||
       "";
 
-    // Soft validation: only skip the network call if email is empty
+    // 3) Soft email check; still return success to the user either way
     if (!email || typeof email !== "string" || !EMAIL_RE.test(email)) {
-      // still return success to the client
-      return response;
+      return ok;
     }
 
-    // Prefer env var if present; otherwise fall back to a hardcoded URL (optional)
-    const url =
-      process.env.GOOGLE_SCRIPT_URL ??
-      ""; // keep empty if you only use the env var on Vercel
-
-    if (!url) {
+    // 4) Use Vercel env var for your Apps Script URL
+    const scriptUrl = process.env.GOOGLE_SCRIPT_URL ?? "";
+    if (!scriptUrl) {
       // No URL configured in this environment — still succeed to the user
-      return response;
+      return ok;
     }
 
-    // Best-effort relay to Google Apps Script
-    await fetch(url, {
+    // 5) Relay to Google Sheets (best effort)
+    const payload = {
+      email,
+      telegram: typeof telegram === "string" ? telegram : "",
+      // GUARANTEE these fields are present
+      source: clientSource && typeof clientSource === "string"
+        ? clientSource
+        : "CryptoMainly Portal",
+      ip, // may be "", but field will always be present
+    };
+
+    await fetch(scriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // Your Sheet expects Email, Telegram, Source, IP, Timestamp is added in Apps Script
-      body: JSON.stringify({
-        email,
-        telegram: telegram ?? "",
-        source: source ?? "CryptoMainly Portal",
-        ip,
-      }),
-      // Avoid throwing the whole route on fetch aborts/timeouts
+      body: JSON.stringify(payload),
       cache: "no-store",
-    }).catch(() => {
-      /* ignore */
-    });
+      // don't throw the whole route on network issues
+      keepalive: true,
+    }).catch(() => { /* ignore */ });
 
-    return response;
+    return ok;
   } catch {
-    // Never surface failure
-    return response;
+    return ok;
   }
 }
