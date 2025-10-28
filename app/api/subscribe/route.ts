@@ -1,60 +1,78 @@
+// app/api/subscribe/route.ts
 import { NextResponse } from "next/server";
+
+const EMAIL_RE =
+  /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 
 export async function POST(req: Request) {
   try {
+    // 1) Parse body once
     const { email, telegram } = await req.json();
 
-    // basic validation
-    const emailOk = typeof email === "string" && /\S+@\S+\.\S+/.test(email);
-    if (!emailOk) {
+    // 2) Basic validation
+    if (typeof email !== "string" || !EMAIL_RE.test(email)) {
       return NextResponse.json(
         { success: false, message: "Please enter a valid email." },
         { status: 400 }
       );
     }
 
-    const source = "CryptoMainly Portal";
-    const ip = req.headers.get("x-forwarded-for") ?? "unknown";
-
-    const url = process.env.GOOGLE_SCRIPT_URL;
-    if (!url) {
-      console.error("GOOGLE_SCRIPT_URL is missing in env");
+    // 3) Ensure env var is present
+    const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
+    if (!scriptUrl) {
+      console.error("Missing GOOGLE_SCRIPT_URL env var.");
       return NextResponse.json(
-        { success: false, message: "Server not configured (URL missing)." },
+        {
+          success: false,
+          message:
+            "Subscription temporarily unavailable (server not configured).",
+        },
         { status: 500 }
       );
     }
 
-    // send to Google Sheet
-    const res = await fetch(url, {
+    // 4) Build payload
+    const ip =
+      req.headers.get("x-forwarded-for") ||
+      req.headers.get("cf-connecting-ip") ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+
+    const payload = {
+      email,
+      telegram: typeof telegram === "string" ? telegram : "",
+      source: "CryptoMainly Portal",
+      ip,
+      ts: new Date().toISOString(),
+    };
+
+    // 5) Send to Google Apps Script (your bound Sheet handler)
+    const res = await fetch(scriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, telegram, source, ip }),
-      // No need for mode: 'no-cors' on server; we want the response body.
+      // keepalive helps in edgey environments, harmless otherwise
+      // @ts-ignore
+      keepalive: true,
+      body: JSON.stringify(payload),
     });
 
-    const text = await res.text(); // capture whatever the script returns
     if (!res.ok) {
-      console.error("Google Sheets error:", res.status, text);
+      const text = await res.text().catch(() => "");
+      console.error("Apps Script responded non-200:", res.status, text);
       return NextResponse.json(
-        { success: false, message: "Could not save to Google Sheet." },
+        { success: false, message: "Subscription failed." },
         { status: 502 }
       );
     }
 
-    // If your script returns JSON, try parsing it (optional)
-    // let payload: any = null;
-    // try { payload = JSON.parse(text) } catch {}
-
-    return NextResponse.json({
-      success: true,
-      message: "Success — welcome aboard!",
-      // debug: payload ?? text, // (optional: remove after testing)
-    });
-  } catch (err) {
-    console.error("Subscribe API fatal:", err);
     return NextResponse.json(
-      { success: false, message: "Unexpected server error." },
+      { success: true, message: "Success — welcome aboard!" },
+      { status: 200 }
+    );
+  } catch (err: any) {
+    console.error("Subscribe API error:", err?.message || err);
+    return NextResponse.json(
+      { success: false, message: "Subscription failed." },
       { status: 500 }
     );
   }
