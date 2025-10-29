@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "app/api/metrics/**/route.ts": {
+      "runtime": "edge",
+      "regions": ["iad1", "sfo1", "pdx1"]
+    }
+  }
+}
