@@ -1,175 +1,147 @@
-// app/components/EmailCapture.tsx
 "use client";
 
-import React from "react";
-
-type State =
-  | { kind: "idle" }
-  | { kind: "submitting" }
-  | { kind: "done" };
-
-const EMAIL_RE =
-  /^(?:[A-Z0-9._%+-]+)@(?:[A-Z0-9-]+\.)+[A-Z]{2,}$/i;
+import { useState } from "react";
 
 export default function EmailCapture() {
-  const [email, setEmail] = React.useState("");
-  const [telegram, setTelegram] = React.useState("");
-  const [agree, setAgree] = React.useState(true);
-  const [state, setState] = React.useState<State>({ kind: "idle" });
+  const [email, setEmail] = useState("");
+  const [telegram, setTelegram] = useState("");
+  const [agree, setAgree] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState<null | "ok" | "err">(null);
+  const [msg, setMsg] = useState("");
 
-  const isValidEmail = EMAIL_RE.test(email.trim());
-  const canSubmit =
-    state.kind !== "submitting" &&
-    isValidEmail &&
-    agree;
-
-  async function handleSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!email || !agree || loading) return;
 
-    setState({ kind: "submitting" });
-
-    // Build payload (server extracts real IP from headers; we still send a friendly source tag)
-    const payload = {
-      email: email.trim(),
-      telegram: telegram.trim(),
-      source: "CryptoMainly Portal",
-    };
+    setLoading(true);
+    setDone(null);
+    setMsg("");
 
     try {
-      // Fire-and-forget: even on network hiccups we show success for smooth UX
-      await fetch("/api/subscribe", {
+      // minimal payload; backend derives IP and adds source
+      const res = await fetch("/api/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ email, telegram }),
       });
-    } catch (err) {
-      // Soft-fail: keep the UI positive
-      console.warn("[EmailCapture] submit soft-fail", err);
-    } finally {
-      setState({ kind: "done" });
+
+      // UI stays positive even if Sheets/API is slow — we log problems
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        console.warn("Subscribe non-200:", res.status, t);
+      }
+
+      setDone("ok");
+      setMsg("Subscribed! You’ll get updates soon.");
       setEmail("");
       setTelegram("");
+    } catch (err) {
+      console.warn("Subscribe error:", err);
+      // still show success to the user (requested behavior)
+      setDone("ok");
+      setMsg("Subscribed! You’ll get updates soon.");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
     <section
-      aria-label="Stay updated — free insights"
-      className="w-full"
+      aria-label="Stay updated"
+      className="
+        w-full max-w-[340px]             /* match price widget width */
+        rounded-xl border border-white/10
+        bg-[#0b1320]/70 backdrop-blur
+        shadow-lg shadow-black/30
+        p-3 md:p-4                        /* tighter padding */
+        text-white
+      "
     >
-      <div className="rounded-2xl border border-white/10 bg-[#0c1219]/70 backdrop-blur-md shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-        {/* Header */}
-        <div className="px-4 pt-4 sm:px-6 sm:pt-6">
-          <div className="flex flex-col gap-1">
-            <h3 className="text-[15px] font-semibold tracking-wide text-white/90">
-              Stay updated — <span className="text-white">free insights</span>
-            </h3>
-            <p className="text-xs text-white/55">
-              Unsubscribe anytime.
-            </p>
-          </div>
+      <h3 className="text-sm font-semibold text-white/90">
+        Stay updated — free insights
+      </h3>
+
+      <form onSubmit={onSubmit} className="mt-2 space-y-2">
+        <div className="grid gap-2">
+          <label className="sr-only" htmlFor="cm-email">Email</label>
+          <input
+            id="cm-email"
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            placeholder="you@email.co.uk"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="
+              h-9 px-3 text-sm rounded-lg
+              bg-black/30 border border-white/12
+              placeholder-white/40
+              outline-none focus:border-yellow-400/60
+            "
+          />
+
+          <label className="sr-only" htmlFor="cm-telegram">Telegram</label>
+          <input
+            id="cm-telegram"
+            type="text"
+            placeholder="Telegram user (optional)"
+            value={telegram}
+            onChange={(e) => setTelegram(e.target.value)}
+            className="
+              h-9 px-3 text-sm rounded-lg
+              bg-black/30 border border-white/12
+              placeholder-white/40
+              outline-none focus:border-yellow-400/60
+            "
+          />
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="px-4 pb-4 pt-3 sm:px-6 sm:pb-6 sm:pt-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* Email */}
-            <div className="relative">
-              <label className="sr-only" htmlFor="ec-email">
-                Email
-              </label>
-              <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-                <span className="text-white/40">✉️</span>
-              </div>
-              <input
-                id="ec-email"
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@email.com"
-                className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-[15px] text-white placeholder:text-white/35 outline-none ring-0 transition focus:border-white/25"
-              />
-              {!email ? null : isValidEmail ? (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400">✓</span>
-              ) : (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-rose-400">•</span>
-              )}
-            </div>
+        <label className="flex items-center gap-2 text-xs text-white/70 select-none">
+          <input
+            type="checkbox"
+            checked={agree}
+            onChange={(e) => setAgree(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-white/20 bg-black/30"
+          />
+          I agree to receive updates, see the{" "}
+          <a href="/privacy" className="underline text-white/90 hover:text-yellow-300">
+            privacy notice
+          </a>.
+        </label>
 
-            {/* Telegram (optional) */}
-            <div className="relative">
-              <label className="sr-only" htmlFor="ec-telegram">
-                Telegram (optional)
-              </label>
-              <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-                <span className="text-white/40">📨</span>
-              </div>
-              <input
-                id="ec-telegram"
-                type="text"
-                autoComplete="off"
-                value={telegram}
-                onChange={(e) => setTelegram(e.target.value)}
-                placeholder="Telegram username (optional)"
-                className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-[15px] text-white placeholder:text-white/35 outline-none ring-0 transition focus:border-white/25"
-              />
-            </div>
+        <button
+          type="submit"
+          disabled={loading || !agree || !email}
+          className="
+            h-9 px-3 text-sm font-semibold
+            rounded-lg text-black
+            bg-yellow-400/90 hover:bg-yellow-300
+            disabled:opacity-50 disabled:cursor-not-allowed
+            shadow
+          "
+        >
+          {loading ? "Sending…" : "Get updates"}
+        </button>
+
+        {/* tiny helper text */}
+        <p className="text-[11px] leading-4 text-white/55 pt-1">
+          Tip: Include your Telegram username to be added to CryptoMainly exclusive Telegram Groups.
+          Receive VIP offer pings and market alerts first.
+        </p>
+
+        {done && (
+          <div
+            aria-live="polite"
+            className={`text-[12px] mt-1 ${
+              done === "ok" ? "text-emerald-300" : "text-red-300"
+            }`}
+          >
+            {msg}
           </div>
-
-          {/* Consent */}
-          <div className="mt-3 flex items-start gap-2">
-            <input
-              id="ec-consent"
-              type="checkbox"
-              className="mt-[2px] h-4 w-4 rounded border-white/20 bg-white/5 text-amber-400 focus:ring-0"
-              checked={agree}
-              onChange={(e) => setAgree(e.target.checked)}
-            />
-            <label
-              htmlFor="ec-consent"
-              className="text-[13px] leading-5 text-white/70"
-            >
-              I agree to receive updates, see the{" "}
-              <a
-                href="/privacy"
-                className="text-white/90 underline decoration-white/30 underline-offset-[3px] hover:text-white"
-              >
-                privacy notice
-              </a>.
-            </label>
-          </div>
-
-          {/* CTA row */}
-          <div className="mt-4 flex items-center gap-3">
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="relative inline-flex h-11 items-center justify-center rounded-xl px-4 text-[15px] font-semibold text-black transition disabled:opacity-40
-                         bg-amber-300 hover:bg-amber-200 active:bg-amber-400"
-            >
-              {/* soft glow */}
-              <span className="pointer-events-none absolute inset-0 -z-10 rounded-xl bg-amber-300/30 blur-xl" />
-              {state.kind === "submitting" ? "Submitting…" : "Get updates"}
-            </button>
-
-            {/* Status text */}
-            {state.kind === "done" && (
-              <p className="text-[13px] text-emerald-400">
-                Success — welcome aboard!
-              </p>
-            )}
-          </div>
-
-          {/* Tip */}
-          <p className="mt-3 text-[12px] leading-5 text-white/45">
-            Tip: Include your Telegram username to be added to CryptoMainly
-            exclusive Telegram Groups. Receive VIP offer pings and market alerts first.
-          </p>
-        </form>
-      </div>
+        )}
+      </form>
     </section>
   );
 }
