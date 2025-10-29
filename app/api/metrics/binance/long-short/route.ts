@@ -1,16 +1,21 @@
 import { NextResponse } from "next/server";
-export const revalidate = 60;
+export const dynamic = "force-dynamic"; export const revalidate = 30;
 
-export async function GET() {
-  const url = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=5m&limit=1";
+export async function GET(req: Request) {
   try {
-    const res = await fetch(url, { next: { revalidate: 60 } });
-    if (!res.ok) return NextResponse.json({ error: `HTTP ${res.status}` }, { status: res.status });
-    const arr = await res.json(); // [{longShortRatio, longAccount, shortAccount, timestamp}]
-    return NextResponse.json(arr?.[0] ?? null, {
-      headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=30" },
-    });
+    const { searchParams } = new URL(req.url);
+    const symbol = (searchParams.get("symbol") || "").toUpperCase();
+    if (!symbol) return NextResponse.json({ ok: false, error: "Missing ?symbol" }, { status: 400 });
+
+    const res = await fetch(
+      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`,
+      { cache: "no-store", headers: { "User-Agent": "cryptomainly-metrics/1.0" } }
+    );
+    if (!res.ok) throw new Error(`Upstream ${res.status}`);
+    const arr = await res.json(); // [{ longShortRatio: "..." }]
+    if (!arr?.length) throw new Error("No LSR data");
+    return NextResponse.json({ ok: true, value: Number(arr[0].longShortRatio), source: "binance" });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Network error" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
