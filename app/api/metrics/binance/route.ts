@@ -1,65 +1,116 @@
 // app/api/metrics/binance/route.ts
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";  // no static caching
-export const revalidate = 0;
+const BINANCE_FAPI = "https://fapi.binance.com";           // USDⓈ-M endpoints
+const BINANCE_FUTURES = "https://fapi.binance.com";        // alias for clarity
 
-// Binance public endpoints (no API key required)
-const OI = (s: string) =>
-  `https://fapi.binance.com/futures/data/openInterestHist?symbol=${s}&period=5m&limit=2`;
-const FR = (s: string) =>
-  `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${s}&limit=2`;
-const LS = (s: string) =>
-  `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${s}&period=5m&limit=2`;
+// Small helper to standardize OK/ERR responses
+function ok(data: any) {
+  return NextResponse.json({ ok: true, ...data }, { status: 200 });
+}
+function err(message: string, code = 502) {
+  return NextResponse.json({ ok: false, error: message }, { status: code });
+}
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase();
-  const metric = (searchParams.get("metric") || "oi").toLowerCase();
-
-  let url = "";
-  if (metric === "oi") url = OI(symbol);
-  else if (metric === "fr") url = FR(symbol);
-  else if (metric === "ls") url = LS(symbol);
-  else {
-    return NextResponse.json({ ok: false, error: "invalid metric" }, { status: 400 });
-  }
-
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`status ${res.status}`);
-    const j = await res.json();
+    const url = new URL(req.url);
+    const symbol = (url.searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+    const metric = (url.searchParams.get("metric") || "").toLowerCase();
 
-    if (!Array.isArray(j) || j.length === 0) {
-      return NextResponse.json({ ok: false, error: "no data" }, { status: 200 });
+    if (!["oi", "fr", "lsr"].includes(metric)) {
+      return err("Unsupported metric. Use one of: oi, fr, lsr", 400);
     }
 
-    // Take the latest snapshot and the previous one for arrow/colour logic
-    const curr = j[j.length - 1];
-    const prev = j.length > 1 ? j[j.length - 2] : null;
+    // Abort if Binance is slow
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 7000);
 
-    let currVal: number | null = null;
-    let prevVal: number | null = null;
+    switch (metric) {
+      case "oi": {
+        // Open Interest (we’ll request the latest 5m bucket and read sumOpenInterestValue in USD)
+        const resp = await fetch(
+          `${BINANCE_FUTURES}/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=1`,
+          { signal: ctrl.signal, headers: { "User-Agent": "cryptomainly-portal" } }
+        );
+        clearTimeout(tm);
+        if (!resp.ok) return err(`Upstream OI error: ${resp.status}`);
+        const arr = (await resp.json()) as Array<{
+          symbol: string;
+          sumOpenInterest: string;
+          sumOpenInterestValue: string; // USD value
+          timestamp: number;
+        }>;
+        if (!arr?.length) return err("No OI data");
+        const latest = arr[0];
+        // Return billions for compact UI (e.g. 10.23 B)
+        const usd = Number(latest.sumOpenInterestValue || "0");
+        return ok({
+          metric: "oi",
+          value: usd,
+          formatted: `${(usd / 1e9).toFixed(2)} B`,
+          ts: latest.timestamp,
+          source: "binance",
+        });
+      }
 
-    if (metric === "oi") {
-      // sumOpenInterestValue is in USD; convert to billions for compact display
-      currVal = curr?.sumOpenInterestValue ? Number(curr.sumOpenInterestValue) / 1e9 : null;
-      prevVal = prev?.sumOpenInterestValue ? Number(prev.sumOpenInterestValue) / 1e9 : null;
-    } else if (metric === "fr") {
-      // fundingRate is a decimal (e.g., 0.0001 = 0.01%)
-      currVal = curr?.fundingRate != null ? Number(curr.fundingRate) : null;
-      prevVal = prev?.fundingRate != null ? Number(prev.fundingRate) : null;
-    } else if (metric === "ls") {
-      // longShortRatio is a numeric ratio (e.g., 1.12)
-      currVal = curr?.longShortRatio != null ? Number(curr.longShortRatio) : null;
-      prevVal = prev?.longShortRatio != null ? Number(prev.longShortRatio) : null;
+      case "fr": {
+        // Funding Rate – latest funding rate entry
+        const resp = await fetch(
+          `${BINANCE_FAPI}/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
+          { signal: ctrl.signal, headers: { "User-Agent": "cryptomainly-portal" } }
+        );
+        clearTimeout(tm);
+        if (!resp.ok) return err(`Upstream FR error: ${resp.status}`);
+        const arr = (await resp.json()) as Array<{
+          symbol: string;
+          fundingRate: string;
+          fundingTime: number;
+        }>;
+        if (!arr?.length) return err("No FR data");
+        const latest = arr[0];
+        const fr = Number(latest.fundingRate) * 100; // percent
+        return ok({
+          metric: "fr",
+          value: fr,
+          formatted: `${fr >= 0 ? "+" : ""}${fr.toFixed(4)}%`,
+          ts: latest.fundingTime,
+          source: "binance",
+        });
+      }
+
+      case "lsr": {
+        // Global Long/Short Account Ratio (5m)
+        const resp = await fetch(
+          `${BINANCE_FUTURES}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`,
+          { signal: ctrl.signal, headers: { "User-Agent": "cryptomainly-portal" } }
+        );
+        clearTimeout(tm);
+        if (!resp.ok) return err(`Upstream LSR error: ${resp.status}`);
+        const arr = (await resp.json()) as Array<{
+          symbol: string;
+          longShortRatio: string; // e.g. "1.1234" (long/short)
+          longAccount: string;
+          shortAccount: string;
+          timestamp: number;
+        }>;
+        if (!arr?.length) return err("No LSR data");
+        const latest = arr[0];
+        const ratio = Number(latest.longShortRatio);
+        // Convert to % longs for your widget (optional) or just return the ratio
+        const pctLong = (ratio / (1 + ratio)) * 100; // ratio = long/short
+        return ok({
+          metric: "lsr",
+          value: ratio,
+          pctLong,
+          formatted: `${pctLong.toFixed(1)}% L`,
+          ts: latest.timestamp,
+          source: "binance",
+        });
+      }
     }
-
-    return NextResponse.json(
-      { ok: true, metric, symbol, curr: currVal, prev: prevVal, ts: new Date().toISOString() },
-      { status: 200 }
-    );
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 200 });
+  } catch (e: any) {
+    const msg = e?.name === "AbortError" ? "Timeout fetching metric" : String(e?.message || e);
+    return err(msg, 504);
   }
 }
