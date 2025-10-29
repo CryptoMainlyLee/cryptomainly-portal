@@ -30,23 +30,22 @@ export default function GlobalMarketBar({ refreshMs = 60000 }: { refreshMs?: num
     const load = async () => {
       try {
         setErr(null);
-        // 🔸 minimal change: call our proxy
+        // ✅ use the internal proxy route for reliability (no CORS / API limits)
         const res = await fetch("/api/cg/global", { cache: "no-store" });
-        const json = await res.json();
+        if (!res.ok) throw new Error("network");
+        const d = await res.json();
 
-        // If proxy bubbled a soft error, keep old UI text
-        const d = json?.data;
-        if (!d) throw new Error("no-data");
-
+        // ✅ updated mapping to match our proxy route’s flattened data structure
         const out: GlobalStats = {
-          coins: d?.active_cryptocurrencies ?? 0,
-          markets: d?.markets ?? 0,
-          marketCap: d?.total_market_cap?.usd ?? 0,
-          vol24h: d?.total_volume?.usd ?? 0,
-          btcDom: d?.market_cap_percentage?.btc ?? 0,
-          ethDom: d?.market_cap_percentage?.eth ?? 0,
-          mcChange24h: d?.market_cap_change_percentage_24h_usd ?? 0,
+          coins: d.coins ?? 0,
+          markets: d.markets ?? 0,
+          marketCap: d.marketCap ?? 0,
+          vol24h: d.vol24h ?? 0,
+          btcDom: d.btcDom ?? 0,
+          ethDom: d.ethDom ?? 0,
+          mcChange24h: d.mcChange24h ?? 0,
         };
+
         setG(out);
       } catch {
         setErr("failed to fetch");
@@ -63,7 +62,8 @@ export default function GlobalMarketBar({ refreshMs = 60000 }: { refreshMs?: num
         <>
           <span>Coins: <span className="text-white">{num(g.coins)}</span></span>
           <span>Exchanges: <span className="text-white">{num(g.markets)}</span></span>
-          <span>Market Cap: <span className="text-white">{money(g.marketCap)}</span>{" "}
+          <span>
+            Market Cap: <span className="text-white">{money(g.marketCap)}</span>{" "}
             <span className={g.mcChange24h >= 0 ? "text-green-400" : "text-red-400"}>
               {g.mcChange24h >= 0 ? "▲" : "▼"} {Math.abs(g.mcChange24h).toFixed(2)}%
             </span>
