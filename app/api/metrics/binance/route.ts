@@ -1,83 +1,65 @@
+// app/api/metrics/binance/route.ts
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic";  // no static caching
+export const revalidate = 0;
 
-type PairPayload = { ok: boolean; stale: boolean; prev: number | null; curr: number | null; ts: number; error?: string };
-
-const S_MAXAGE = 30;
-const TTL_MS = 30_000;
-const TIMEOUT_MS = 10_000;
-
-type Key = `${"oi"|"fr"|"ls"}:${string}`; // metric:symbol
-const cache = new Map<Key, Omit<PairPayload,"ok"|"stale">>();
-const cacheTs = new Map<Key, number>();
-
-function timeout<T>(ms: number, p: Promise<T>) {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("timeout")), ms);
-    p.then((v) => { clearTimeout(t); resolve(v); })
-     .catch((e) => { clearTimeout(t); reject(e); });
-  });
-}
-
-async function fetchWithRetry(url: string, tries = 3): Promise<any> {
-  let lastErr: any;
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await timeout(TIMEOUT_MS, fetch(url, { cache: "no-store", headers: { "User-Agent": "CryptoMainly/1.0" } }));
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      return await res.json();
-    } catch (e) {
-      lastErr = e;
-      const delay = (i === 0 ? 300 : i === 1 ? 900 : 1800) + Math.floor(Math.random() * 200);
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-  throw lastErr;
-}
+// Binance public endpoints (no API key required)
+const OI = (s: string) =>
+  `https://fapi.binance.com/futures/data/openInterestHist?symbol=${s}&period=5m&limit=2`;
+const FR = (s: string) =>
+  `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${s}&limit=2`;
+const LS = (s: string) =>
+  `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${s}&period=5m&limit=2`;
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const symbol = url.searchParams.get("symbol") || "BTCUSDT";
-  const metric = (url.searchParams.get("metric") || "oi") as "oi" | "fr" | "ls";
-  const key: Key = `${metric}:${symbol}`;
-  const now = Date.now();
-  const headers = { "Cache-Control": `public, s-maxage=${S_MAXAGE}, max-age=0, stale-while-revalidate=30` };
+  const { searchParams } = new URL(req.url);
+  const symbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+  const metric = (searchParams.get("metric") || "oi").toLowerCase();
 
-  const freshNeeded = now - (cacheTs.get(key) || 0) > TTL_MS;
-  if (!freshNeeded && cache.has(key)) {
-    const c = cache.get(key)!;
-    return NextResponse.json<PairPayload>({ ok: true, stale: false, ...c }, { headers });
+  let url = "";
+  if (metric === "oi") url = OI(symbol);
+  else if (metric === "fr") url = FR(symbol);
+  else if (metric === "ls") url = LS(symbol);
+  else {
+    return NextResponse.json({ ok: false, error: "invalid metric" }, { status: 400 });
   }
 
-  let upstream = "";
-  if (metric === "oi") upstream = `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=2`;
-  else if (metric === "fr") upstream = `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=2`;
-  else upstream = `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=2`;
-
   try {
-    const arr = await fetchWithRetry(upstream);
-    let prev: number | null = null;
-    let curr: number | null = null;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const j = await res.json();
+
+    if (!Array.isArray(j) || j.length === 0) {
+      return NextResponse.json({ ok: false, error: "no data" }, { status: 200 });
+    }
+
+    // Take the latest snapshot and the previous one for arrow/colour logic
+    const curr = j[j.length - 1];
+    const prev = j.length > 1 ? j[j.length - 2] : null;
+
+    let currVal: number | null = null;
+    let prevVal: number | null = null;
+
     if (metric === "oi") {
-      prev = arr?.[0] ? Number(arr[0].sumOpenInterestValue ?? arr[0].sumOpenInterest ?? arr[0].openInterest) : null;
-      curr = arr?.[1] ? Number(arr[1].sumOpenInterestValue ?? arr[1].sumOpenInterest ?? arr[1].openInterest) : null;
+      // sumOpenInterestValue is in USD; convert to billions for compact display
+      currVal = curr?.sumOpenInterestValue ? Number(curr.sumOpenInterestValue) / 1e9 : null;
+      prevVal = prev?.sumOpenInterestValue ? Number(prev.sumOpenInterestValue) / 1e9 : null;
     } else if (metric === "fr") {
-      prev = arr?.[0] ? Number(arr[0].fundingRate) : null;
-      curr = arr?.[1] ? Number(arr[1].fundingRate) : null;
-    } else {
-      prev = arr?.[0] ? Number(arr[0].longShortRatio) : null;
-      curr = arr?.[1] ? Number(arr[1].longShortRatio) : null;
+      // fundingRate is a decimal (e.g., 0.0001 = 0.01%)
+      currVal = curr?.fundingRate != null ? Number(curr.fundingRate) : null;
+      prevVal = prev?.fundingRate != null ? Number(prev.fundingRate) : null;
+    } else if (metric === "ls") {
+      // longShortRatio is a numeric ratio (e.g., 1.12)
+      currVal = curr?.longShortRatio != null ? Number(curr.longShortRatio) : null;
+      prevVal = prev?.longShortRatio != null ? Number(prev.longShortRatio) : null;
     }
-    const payload = { prev, curr, ts: now };
-    cache.set(key, payload);
-    cacheTs.set(key, now);
-    return NextResponse.json<PairPayload>({ ok: true, stale: false, ...payload }, { headers });
-  } catch (e: any) {
-    if (cache.has(key)) {
-      const c = cache.get(key)!;
-      return NextResponse.json<PairPayload>({ ok: true, stale: true, ...c, error: String(e?.message || e) }, { headers });
-    }
-    return NextResponse.json<PairPayload>({ ok: false, stale: true, prev: null, curr: null, ts: now, error: String(e?.message || e) }, { headers });
+
+    return NextResponse.json(
+      { ok: true, metric, symbol, curr: currVal, prev: prevVal, ts: new Date().toISOString() },
+      { status: 200 }
+    );
+  } catch (err) {
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 200 });
   }
 }
