@@ -1,43 +1,52 @@
-// Global long/short account ratio (Binance)
 import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
-async function hit(url: string) {
+async function hitJson(url: string): Promise<any> {
   const res = await fetch(url, {
     headers: { "User-Agent": UA, Referer: "https://www.cryptomainly.co.uk/" },
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const ct = res.headers.get("content-type") || "";
+  const body = ct.includes("application/json") ? await res.json() : JSON.parse(await res.text());
+  return body;
+}
+
+function withRelay(url: string) {
+  return [`https://r.jina.ai/${url.replace(/^https?:\/\//, "")}`, `https://r.jina.ai/http://${url.replace(/^https?:\/\//, "")}`];
 }
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const symbol = (searchParams.get("symbol") || "").toUpperCase();
-    if (!symbol)
+    if (!symbol) {
       return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
+    }
 
     const qs = `symbol=${symbol}&period=5m&limit=1`;
 
-    // ? Mirror + primary + fallback
-    const urls = [
+    const primaries = [
       `https://data-api.binance.vision/futures/data/globalLongShortAccountRatio?${qs}`,
       `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?${qs}`,
       `https://api.binance.com/futures/data/globalLongShortAccountRatio?${qs}`,
     ];
 
-    let data: any = null;
+    const candidates = primaries.flatMap((u) => [u, ...withRelay(u)]);
+
+    let data: any | null = null;
     let lastErr: any = null;
 
-    for (const u of urls) {
+    for (const u of candidates) {
       try {
-        const arr = await hit(u);
-        data = Array.isArray(arr) && arr.length ? arr[0] : null;
-        if (data) break;
+        const arr = await hitJson(u);
+        if (Array.isArray(arr) && arr.length) {
+          data = arr[0];
+          break;
+        }
       } catch (e) {
         lastErr = e;
       }
@@ -52,9 +61,6 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: String(err?.message || err) },
-      { status: 502 }
-    );
+    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
   }
 }
