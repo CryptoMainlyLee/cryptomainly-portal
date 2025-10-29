@@ -1,79 +1,82 @@
-// Minimal, targeted fix: route OI / Funding / LSR to Binance (public endpoints)
-// so we avoid CoinGlass 451 blocks. Frontend contract unchanged.
-//
-// GET /api/metrics/binance?symbol=BTCUSDT&metric=oi|funding|lsr
-//
-// Returns { ok: true, value: number } on success,
-// or { ok: false, error: string } on failure.
-
+// app/api/metrics/binance/route.ts
 import { NextResponse } from "next/server";
 
-type MetricKind = "oi" | "funding" | "lsr";
+export const dynamic = "force-dynamic";           // don't cache at the edge
+export const revalidate = 30;                     // server cache ~30s
 
-export async function GET(req: Request, { params }: { params: { exchange: string } }) {
-  const url = new URL(req.url);
-  const exchange = (params.exchange || "").toLowerCase();
-  const symbol = (url.searchParams.get("symbol") || "BTCUSDT").toUpperCase();
-  const metric = (url.searchParams.get("metric") || "").toLowerCase() as MetricKind;
+type Metric = "oi" | "funding" | "lsr";
 
-  // Only handle our three Binance-backed metrics here
-  if (exchange !== "binance") {
-    return NextResponse.json({ ok: false, error: "Unknown exchange" }, { status: 400 });
-  }
-  if (!["oi", "funding", "lsr"].includes(metric)) {
-    return NextResponse.json({ ok: false, error: "Unknown metric" }, { status: 400 });
-  }
+function badRequest(message: string) {
+  return NextResponse.json({ ok: false, error: message }, { status: 400 });
+}
 
+function serverError(message: string) {
+  return NextResponse.json({ ok: false, error: message }, { status: 500 });
+}
+
+async function fetchJSON<T>(url: string) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 10_000);
   try {
-    let upstream: string;
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      // Binance asks for a UA; harmless to set one
+      headers: { "User-Agent": "cryptomainly-metrics/1.0" },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      throw new Error(`Upstream ${res.status}`);
+    }
+    const json = (await res.json()) as T;
+    return json;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const symbol = (searchParams.get("symbol") || "").toUpperCase();
+    const metric = (searchParams.get("metric") || "").toLowerCase() as Metric;
+
+    if (!symbol) return badRequest("Missing ?symbol (e.g. BTCUSDT)");
+    if (!["oi", "funding", "lsr"].includes(metric))
+      return badRequest("Invalid ?metric (use: oi | funding | lsr)");
+
+    const base = "https://fapi.binance.com";
 
     if (metric === "oi") {
-      // Open Interest history (last candle)
-      upstream = `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=1`;
-      const res = await fetch(upstream, { cache: "no-store" });
-      if (!res.ok) {
-        return NextResponse.json({ ok: false, error: `Upstream OI error: ${res.status}` }, { status: 502 });
-      }
-      const data: Array<{ sumOpenInterest: string }> = await res.json();
-      const last = data?.[data.length - 1];
-      const value = last ? Number(last.sumOpenInterest) : NaN;
-      if (!isFinite(value)) {
-        return NextResponse.json({ ok: false, error: "Invalid OI response" }, { status: 502 });
-      }
-      return NextResponse.json({ ok: true, value }, { headers: { "Cache-Control": "no-store" } });
+      // Open Interest (quantity) – /fapi/v1/openInterest
+      type OIRes = { openInterest: string; symbol: string };
+      const data = await fetchJSON<OIRes>(`${base}/fapi/v1/openInterest?symbol=${symbol}`);
+      const value = Number(data.openInterest); // contracts
+      return NextResponse.json({ ok: true, value, source: "binance" });
     }
 
     if (metric === "funding") {
-      // Premium index includes latest funding rate
-      upstream = `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`;
-      const res = await fetch(upstream, { cache: "no-store" });
-      if (!res.ok) {
-        return NextResponse.json({ ok: false, error: `Upstream funding error: ${res.status}` }, { status: 502 });
-      }
-      const data: { lastFundingRate?: string } = await res.json();
-      const value = Number(data.lastFundingRate ?? NaN);
-      if (!isFinite(value)) {
-        return NextResponse.json({ ok: false, error: "Invalid funding response" }, { status: 502 });
-      }
-      return NextResponse.json({ ok: true, value }, { headers: { "Cache-Control": "no-store" } });
+      // Most-recent funding rate – /fapi/v1/fundingRate?limit=1
+      type FR = { fundingRate: string; fundingTime: number };
+      const arr = await fetchJSON<FR[]>(
+        `${base}/fapi/v1/fundingRate?symbol=${symbol}&limit=1`
+      );
+      if (!arr?.length) throw new Error("No funding data");
+      const value = Number(arr[0].fundingRate); // decimal (e.g. 0.0001 = 0.01%)
+      return NextResponse.json({ ok: true, value, source: "binance" });
     }
 
     // metric === "lsr"
-    // Global Long/Short Account Ratio (last candle)
-    upstream = `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`;
-    const res = await fetch(upstream, { cache: "no-store" });
-    if (!res.ok) {
-      return NextResponse.json({ ok: false, error: `Upstream LSR error: ${res.status}` }, { status: 502 });
+    {
+      // Global long/short ratio (accounts) – /futures/data/globalLongShortAccountRatio
+      type LSR = { longShortRatio: string };
+      const arr = await fetchJSON<LSR[]>(
+        `${base}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`
+      );
+      if (!arr?.length) throw new Error("No LSR data");
+      const ratio = Number(arr[0].longShortRatio); // e.g. 1.12 means 1.12:1 longs/shorts
+      return NextResponse.json({ ok: true, value: ratio, source: "binance" });
     }
-    const data: Array<{ longShortRatio: string }> = await res.json();
-    const last = data?.[data.length - 1];
-    const value = last ? Number(last.longShortRatio) : NaN;
-    if (!isFinite(value)) {
-      return NextResponse.json({ ok: false, error: "Invalid LSR response" }, { status: 502 });
-    }
-    return NextResponse.json({ ok: true, value }, { headers: { "Cache-Control": "no-store" } });
-
   } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 500 });
+    return serverError(String(err?.message || err));
   }
 }
