@@ -9,7 +9,6 @@ const UA =
 async function hit(url: string) {
   const res = await fetch(url, {
     headers: { "User-Agent": UA, Referer: "https://www.cryptomainly.co.uk/" },
-    // Avoid caching at the edge
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -20,16 +19,19 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const symbol = (searchParams.get("symbol") || "").toUpperCase();
-    if (!symbol) return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
+    if (!symbol)
+      return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
 
-    // Primary + fallback mirrors
+    // ✅ Mirror + primary + fallback
     const urls = [
+      `https://data-api.binance.vision/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
       `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
       `https://api.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
     ];
 
     let data: any = null;
     let lastErr: any = null;
+
     for (const u of urls) {
       try {
         const arr = await hit(u);
@@ -39,11 +41,17 @@ export async function GET(req: Request) {
         lastErr = e;
       }
     }
+
     if (!data) throw lastErr || new Error("No data");
 
-    const value = typeof data.fundingRate === "string" ? parseFloat(data.fundingRate) : null;
+    const value =
+      typeof data.fundingRate === "string" ? parseFloat(data.fundingRate) : null;
+
     return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: String(err?.message || err) },
+      { status: 502 }
+    );
   }
 }

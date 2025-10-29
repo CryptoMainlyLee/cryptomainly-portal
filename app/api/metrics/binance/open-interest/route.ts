@@ -18,15 +18,19 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const symbol = (searchParams.get("symbol") || "").toUpperCase();
-    if (!symbol) return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
+    if (!symbol)
+      return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
 
+    // ✅ Mirror + primary + fallback
     const urls = [
+      `https://data-api.binance.vision/fapi/v1/openInterest?symbol=${symbol}`,
       `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
       `https://api.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
     ];
 
     let data: any = null;
     let lastErr: any = null;
+
     for (const u of urls) {
       try {
         data = await hit(u);
@@ -35,13 +39,19 @@ export async function GET(req: Request) {
         lastErr = e;
       }
     }
+
     if (!data) throw lastErr || new Error("No data");
 
     const value =
-      typeof data.openInterest === "string" ? parseFloat(data.openInterest) : Number(data.openInterest);
+      typeof data.openInterest === "string"
+        ? parseFloat(data.openInterest)
+        : Number(data.openInterest);
 
     return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: String(err?.message || err) },
+      { status: 502 }
+    );
   }
 }

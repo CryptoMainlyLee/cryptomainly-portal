@@ -18,17 +18,21 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const symbol = (searchParams.get("symbol") || "").toUpperCase();
-    if (!symbol) return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
+    if (!symbol)
+      return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
 
-    // 5m window is fine for the widget—return latest point
     const qs = `symbol=${symbol}&period=5m&limit=1`;
+
+    // ? Mirror + primary + fallback
     const urls = [
+      `https://data-api.binance.vision/futures/data/globalLongShortAccountRatio?${qs}`,
       `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?${qs}`,
       `https://api.binance.com/futures/data/globalLongShortAccountRatio?${qs}`,
     ];
 
     let data: any = null;
     let lastErr: any = null;
+
     for (const u of urls) {
       try {
         const arr = await hit(u);
@@ -38,13 +42,19 @@ export async function GET(req: Request) {
         lastErr = e;
       }
     }
+
     if (!data) throw lastErr || new Error("No data");
 
     const value =
-      typeof data.longShortRatio === "string" ? parseFloat(data.longShortRatio) : Number(data.longShortRatio);
+      typeof data.longShortRatio === "string"
+        ? parseFloat(data.longShortRatio)
+        : Number(data.longShortRatio);
 
     return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: String(err?.message || err) },
+      { status: 502 }
+    );
   }
 }
