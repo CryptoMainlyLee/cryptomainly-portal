@@ -1,10 +1,9 @@
+// app/components/MarketMetricsWidget.tsx
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Formatting helpers
-──────────────────────────────────────────────────────────────────────────── */
+/* ───────────────── helpers ───────────────── */
 const compactCurrency = (n?: number, digits = 2) =>
   n == null
     ? "—"
@@ -26,7 +25,6 @@ const arrowColourByChange = (curr: number | null, prev: number | null) => {
 };
 
 const arrowColourBySign = (curr: number | null, prev: number | null) => {
-  // Funding rate: colour reflects sign; arrow reflects change vs previous
   const signColour =
     curr == null ? "text-white/80" : curr > 0 ? "text-emerald-400" : curr < 0 ? "text-red-400" : "text-white/60";
   if (curr == null || prev == null) return { arrow: "", colour: signColour };
@@ -53,21 +51,19 @@ const fearGreedBadge = (value?: number, label?: string) => {
   );
 };
 
-/* Sticky setter: once a value is non-null, never regress to null/undefined */
+/* “sticky” setter: never regress to null once we have a value */
 const stickySet =
   <T,>(setter: React.Dispatch<React.SetStateAction<T | null>>) =>
   (next: T | null | undefined, current: T | null) => {
-    if (next === null || next === undefined) return; // ignore regressions
+    if (next === null || next === undefined) return;
     if (Number.isNaN(next as any)) return;
     if (current === next) return;
     setter(next);
   };
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Component
-──────────────────────────────────────────────────────────────────────────── */
+/* ─────────────── component ─────────────── */
 export default function MarketMetricsWidget() {
-  /** ORIGINAL METRICS (kept) */
+  // ORIGINAL rows
   const [domBTC, _setDomBTC] = useState<number | null>(null);
   const [domETH, _setDomETH] = useState<number | null>(null);
   const [mcap, _setMcap] = useState<number | null>(null);
@@ -81,7 +77,7 @@ export default function MarketMetricsWidget() {
   const setVol24h = (v: number | null | undefined) => stickySet(_setVol24h)(v, vol24h);
   const setFngValue = (v: number | null | undefined) => stickySet(_setFngValue)(v, fngValue);
 
-  /** NEW LIVE ROWS (BTC & ETH per metric) */
+  // NEW live rows
   const [oiBTC, setOiBTC] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
   const [oiETH, setOiETH] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
   const [frBTC, setFrBTC] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
@@ -89,15 +85,15 @@ export default function MarketMetricsWidget() {
   const [lsBTC, setLsBTC] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
   const [lsETH, setLsETH] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
 
-  /** Staleness / header hint control */
+  // stale flags for tiny “catching up…” hint
   const [lastOkGlobal, setLastOkGlobal] = useState<number>(() => Date.now());
   const [lastOkBinance, setLastOkBinance] = useState<number>(() => Date.now());
 
-  /** Abort controllers (prevent overlapping fetches) */
+  // abort overlap fetches
   const globalAbort = useRef<AbortController | null>(null);
   const binanceAbort = useRef<AbortController | null>(null);
 
-  /** Hydrate from session cache so reloads start populated */
+  // hydrate from session cache so reloads don’t flash empty
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem("cm_metrics_cache_proxy");
@@ -121,7 +117,6 @@ export default function MarketMetricsWidget() {
     } catch {}
   }, []);
 
-  /** Persist cache */
   useEffect(() => {
     try {
       sessionStorage.setItem(
@@ -139,17 +134,33 @@ export default function MarketMetricsWidget() {
     lastOkGlobal, lastOkBinance,
   ]);
 
-  /** Fetch ORIGINAL block — via local API proxies (/api/metrics/global, /api/metrics/fng) */
+  /* ─────────── data fetch (minimal changes + fallbacks) ─────────── */
+
+  // 1) Global + FNG (try /api/metrics/*, fall back to your original /api/cg/* + /api/sentiment)
   const fetchOriginal = async () => {
     try {
       globalAbort.current?.abort();
       const ac = new AbortController();
       globalAbort.current = ac;
 
-      const [g, f] = await Promise.all([
-        fetch("/api/metrics/global", { cache: "no-store", signal: ac.signal }).then((r) => r.json()),
-        fetch("/api/metrics/fng", { cache: "no-store", signal: ac.signal }).then((r) => r.json()),
-      ]);
+      // first try the “metrics” proxies if present
+      let g: any = null;
+      let f: any = null;
+
+      try {
+        [g, f] = await Promise.all([
+          fetch("/api/metrics/global", { cache: "no-store", signal: ac.signal }).then(r => r.ok ? r.json() : null),
+          fetch("/api/metrics/fng",    { cache: "no-store", signal: ac.signal }).then(r => r.ok ? r.json() : null),
+        ]);
+      } catch { /* ignore, we have fallbacks below */ }
+
+      // fallback to your existing routes
+      if (!g) {
+        try { g = await fetch("/api/cg/global", { cache: "no-store", signal: ac.signal }).then(r => r.ok ? r.json() : null); } catch {}
+      }
+      if (!f) {
+        try { f = await fetch("/api/sentiment", { cache: "no-store", signal: ac.signal }).then(r => r.ok ? r.json() : null); } catch {}
+      }
 
       if (g?.ok) {
         setDomBTC(g.btcDom);
@@ -165,11 +176,10 @@ export default function MarketMetricsWidget() {
       }
     } catch (e: any) {
       if (e?.name === "AbortError") return;
-      // keep last good values
     }
   };
 
-  /** Fetch Binance rows — via local API proxy (/api/metrics/binance) */
+  // 2) Live rows via our local proxy (Binance or Coinglass behind /api/metrics/binance)
   const fetchBinance = async () => {
     try {
       binanceAbort.current?.abort();
@@ -177,18 +187,14 @@ export default function MarketMetricsWidget() {
       binanceAbort.current = ac;
 
       const read = (s: string, m: "oi" | "fr" | "ls") =>
-        fetch(`/api/metrics/binance?symbol=${s}&metric=${m}`, {
-          cache: "no-store",
-          signal: ac.signal,
-        }).then((r) => r.json());
+        fetch(`/api/metrics/binance?symbol=${s}&metric=${m}`, { cache: "no-store", signal: ac.signal })
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null);
 
       const [btcOI, ethOI, btcFR, ethFR, btcLS, ethLS] = await Promise.all([
-        read("BTCUSDT", "oi"),
-        read("ETHUSDT", "oi"),
-        read("BTCUSDT", "fr"),
-        read("ETHUSDT", "fr"),
-        read("BTCUSDT", "ls"),
-        read("ETHUSDT", "ls"),
+        read("BTCUSDT", "oi"), read("ETHUSDT", "oi"),
+        read("BTCUSDT", "fr"), read("ETHUSDT", "fr"),
+        read("BTCUSDT", "ls"), read("ETHUSDT", "ls"),
       ]);
 
       if (btcOI?.ok) setOiBTC({ prev: btcOI.prev, curr: btcOI.curr });
@@ -202,30 +208,26 @@ export default function MarketMetricsWidget() {
       if (anyFresh) setLastOkBinance(Date.now());
     } catch (e: any) {
       if (e?.name === "AbortError") return;
-      // keep last good values
     }
   };
 
-  /** Intervals (Binance 30s, Global/FNG 90s, staggered start) */
+  // intervals (Binance 30s, Global/FNG 90s, staggered start)
   useEffect(() => {
     fetchBinance();
     const t1 = setTimeout(fetchOriginal, 1000);
     const idB = setInterval(fetchBinance, 30_000);
     const idG = setInterval(fetchOriginal, 90_000);
     return () => {
-      clearInterval(idB);
-      clearInterval(idG);
-      clearTimeout(t1);
-      globalAbort.current?.abort();
-      binanceAbort.current?.abort();
+      clearInterval(idB); clearInterval(idG); clearTimeout(t1);
+      globalAbort.current?.abort(); binanceAbort.current?.abort();
     };
   }, []);
 
-  /** Show “catching up…” only if BOTH sources are stale for > 5 minutes */
   const now = Date.now();
   const showCatchingUp =
     now - lastOkGlobal > 5 * 60_000 && now - lastOkBinance > 5 * 60_000;
 
+  /* ─────────────── render ─────────────── */
   return (
     <div className="w-[320px] max-w-[92vw] rounded-2xl bg-[#0b121a]/85 p-3 ring-1 ring-white/10 backdrop-blur font-sans text-[13px] leading-snug text-white/90">
       {/* Header */}
@@ -233,13 +235,11 @@ export default function MarketMetricsWidget() {
         <div className="text-[12px] font-semibold text-white/90">Market Metrics</div>
         <div className="text-[10px] text-white/60">
           Updated live
-          {showCatchingUp && (
-            <span className="ml-1 text-orange-300/70">• catching up…</span>
-          )}
+          {showCatchingUp && <span className="ml-1 text-orange-300/70">• catching up…</span>}
         </div>
       </div>
 
-      {/* ORIGINAL BLOCK (unchanged layout) */}
+      {/* ORIGINAL block (unchanged layout) */}
       <ul className="space-y-2">
         <li className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 ring-1 ring-white/10">
           <span className="flex items-center gap-2">
@@ -282,7 +282,7 @@ export default function MarketMetricsWidget() {
         </li>
       </ul>
 
-      {/* ADDED LIVE ROWS (grouped by metric) */}
+      {/* ADDED live rows (BTC | ETH) */}
       <ul className="mt-3 space-y-1.5">
         {/* Open Interest */}
         <li className="flex items-center justify-between">
@@ -389,7 +389,7 @@ export default function MarketMetricsWidget() {
           </span>
         </li>
 
-        {/* Mirror Fear & Greed */}
+        {/* Mirror F&G for quick scan */}
         <li className="flex items-center justify-between">
           <span className="flex items-center gap-1.5">
             <span className="text-[14px]">😎</span>
@@ -399,34 +399,19 @@ export default function MarketMetricsWidget() {
         </li>
       </ul>
 
-      {/* Footer credits */}
+      {/* Footer credits (as before) */}
       <div className="mt-3 border-t border-white/10 pt-2 text-center text-[11px] leading-snug">
         <span className="text-white/60">Data provided by </span>
-        <a
-          className="text-[#00ff7f] hover:underline font-medium"
-          target="_blank"
-          rel="noreferrer"
-          href="https://www.coinglass.com/"
-        >
+        <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.coinglass.com/">
           Coinglass
         </a>
         <span className="text-white/40"> / </span>
-        <a
-          className="text-[#00ff7f] hover:underline font-medium"
-          target="_blank"
-          rel="noreferrer"
-          href="https://alternative.me/crypto/fear-and-greed-index/"
-        >
+        <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://alternative.me/crypto/fear-and-greed-index/">
           Alternative.me
         </a>
         <div className="mt-1 text-[10px] text-white/45">
           Additional live pairs via{" "}
-          <a
-            className="text-[#00ff7f] hover:underline font-medium"
-            target="_blank"
-            rel="noreferrer"
-            href="https://www.binance.com/en/futures-api"
-          >
+          <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.binance.com/en/futures-api">
             Binance
           </a>
         </div>
