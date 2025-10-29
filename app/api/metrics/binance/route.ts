@@ -1,116 +1,79 @@
-// app/api/metrics/binance/route.ts
+// Minimal, targeted fix: route OI / Funding / LSR to Binance (public endpoints)
+// so we avoid CoinGlass 451 blocks. Frontend contract unchanged.
+//
+// GET /api/metrics/binance?symbol=BTCUSDT&metric=oi|funding|lsr
+//
+// Returns { ok: true, value: number } on success,
+// or { ok: false, error: string } on failure.
+
 import { NextResponse } from "next/server";
 
-const BINANCE_FAPI = "https://fapi.binance.com";           // USDⓈ-M endpoints
-const BINANCE_FUTURES = "https://fapi.binance.com";        // alias for clarity
+type MetricKind = "oi" | "funding" | "lsr";
 
-// Small helper to standardize OK/ERR responses
-function ok(data: any) {
-  return NextResponse.json({ ok: true, ...data }, { status: 200 });
-}
-function err(message: string, code = 502) {
-  return NextResponse.json({ ok: false, error: message }, { status: code });
-}
+export async function GET(req: Request, { params }: { params: { exchange: string } }) {
+  const url = new URL(req.url);
+  const exchange = (params.exchange || "").toLowerCase();
+  const symbol = (url.searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+  const metric = (url.searchParams.get("metric") || "").toLowerCase() as MetricKind;
 
-export async function GET(req: Request) {
+  // Only handle our three Binance-backed metrics here
+  if (exchange !== "binance") {
+    return NextResponse.json({ ok: false, error: "Unknown exchange" }, { status: 400 });
+  }
+  if (!["oi", "funding", "lsr"].includes(metric)) {
+    return NextResponse.json({ ok: false, error: "Unknown metric" }, { status: 400 });
+  }
+
   try {
-    const url = new URL(req.url);
-    const symbol = (url.searchParams.get("symbol") || "BTCUSDT").toUpperCase();
-    const metric = (url.searchParams.get("metric") || "").toLowerCase();
+    let upstream: string;
 
-    if (!["oi", "fr", "lsr"].includes(metric)) {
-      return err("Unsupported metric. Use one of: oi, fr, lsr", 400);
+    if (metric === "oi") {
+      // Open Interest history (last candle)
+      upstream = `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=1`;
+      const res = await fetch(upstream, { cache: "no-store" });
+      if (!res.ok) {
+        return NextResponse.json({ ok: false, error: `Upstream OI error: ${res.status}` }, { status: 502 });
+      }
+      const data: Array<{ sumOpenInterest: string }> = await res.json();
+      const last = data?.[data.length - 1];
+      const value = last ? Number(last.sumOpenInterest) : NaN;
+      if (!isFinite(value)) {
+        return NextResponse.json({ ok: false, error: "Invalid OI response" }, { status: 502 });
+      }
+      return NextResponse.json({ ok: true, value }, { headers: { "Cache-Control": "no-store" } });
     }
 
-    // Abort if Binance is slow
-    const ctrl = new AbortController();
-    const tm = setTimeout(() => ctrl.abort(), 7000);
-
-    switch (metric) {
-      case "oi": {
-        // Open Interest (we’ll request the latest 5m bucket and read sumOpenInterestValue in USD)
-        const resp = await fetch(
-          `${BINANCE_FUTURES}/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=1`,
-          { signal: ctrl.signal, headers: { "User-Agent": "cryptomainly-portal" } }
-        );
-        clearTimeout(tm);
-        if (!resp.ok) return err(`Upstream OI error: ${resp.status}`);
-        const arr = (await resp.json()) as Array<{
-          symbol: string;
-          sumOpenInterest: string;
-          sumOpenInterestValue: string; // USD value
-          timestamp: number;
-        }>;
-        if (!arr?.length) return err("No OI data");
-        const latest = arr[0];
-        // Return billions for compact UI (e.g. 10.23 B)
-        const usd = Number(latest.sumOpenInterestValue || "0");
-        return ok({
-          metric: "oi",
-          value: usd,
-          formatted: `${(usd / 1e9).toFixed(2)} B`,
-          ts: latest.timestamp,
-          source: "binance",
-        });
+    if (metric === "funding") {
+      // Premium index includes latest funding rate
+      upstream = `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`;
+      const res = await fetch(upstream, { cache: "no-store" });
+      if (!res.ok) {
+        return NextResponse.json({ ok: false, error: `Upstream funding error: ${res.status}` }, { status: 502 });
       }
-
-      case "fr": {
-        // Funding Rate – latest funding rate entry
-        const resp = await fetch(
-          `${BINANCE_FAPI}/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
-          { signal: ctrl.signal, headers: { "User-Agent": "cryptomainly-portal" } }
-        );
-        clearTimeout(tm);
-        if (!resp.ok) return err(`Upstream FR error: ${resp.status}`);
-        const arr = (await resp.json()) as Array<{
-          symbol: string;
-          fundingRate: string;
-          fundingTime: number;
-        }>;
-        if (!arr?.length) return err("No FR data");
-        const latest = arr[0];
-        const fr = Number(latest.fundingRate) * 100; // percent
-        return ok({
-          metric: "fr",
-          value: fr,
-          formatted: `${fr >= 0 ? "+" : ""}${fr.toFixed(4)}%`,
-          ts: latest.fundingTime,
-          source: "binance",
-        });
+      const data: { lastFundingRate?: string } = await res.json();
+      const value = Number(data.lastFundingRate ?? NaN);
+      if (!isFinite(value)) {
+        return NextResponse.json({ ok: false, error: "Invalid funding response" }, { status: 502 });
       }
-
-      case "lsr": {
-        // Global Long/Short Account Ratio (5m)
-        const resp = await fetch(
-          `${BINANCE_FUTURES}/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`,
-          { signal: ctrl.signal, headers: { "User-Agent": "cryptomainly-portal" } }
-        );
-        clearTimeout(tm);
-        if (!resp.ok) return err(`Upstream LSR error: ${resp.status}`);
-        const arr = (await resp.json()) as Array<{
-          symbol: string;
-          longShortRatio: string; // e.g. "1.1234" (long/short)
-          longAccount: string;
-          shortAccount: string;
-          timestamp: number;
-        }>;
-        if (!arr?.length) return err("No LSR data");
-        const latest = arr[0];
-        const ratio = Number(latest.longShortRatio);
-        // Convert to % longs for your widget (optional) or just return the ratio
-        const pctLong = (ratio / (1 + ratio)) * 100; // ratio = long/short
-        return ok({
-          metric: "lsr",
-          value: ratio,
-          pctLong,
-          formatted: `${pctLong.toFixed(1)}% L`,
-          ts: latest.timestamp,
-          source: "binance",
-        });
-      }
+      return NextResponse.json({ ok: true, value }, { headers: { "Cache-Control": "no-store" } });
     }
-  } catch (e: any) {
-    const msg = e?.name === "AbortError" ? "Timeout fetching metric" : String(e?.message || e);
-    return err(msg, 504);
+
+    // metric === "lsr"
+    // Global Long/Short Account Ratio (last candle)
+    upstream = `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`;
+    const res = await fetch(upstream, { cache: "no-store" });
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, error: `Upstream LSR error: ${res.status}` }, { status: 502 });
+    }
+    const data: Array<{ longShortRatio: string }> = await res.json();
+    const last = data?.[data.length - 1];
+    const value = last ? Number(last.longShortRatio) : NaN;
+    if (!isFinite(value)) {
+      return NextResponse.json({ ok: false, error: "Invalid LSR response" }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true, value }, { headers: { "Cache-Control": "no-store" } });
+
+  } catch (err: any) {
+    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 500 });
   }
 }
