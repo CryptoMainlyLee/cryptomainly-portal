@@ -1,17 +1,17 @@
-// app/api/metrics/binance/funding/route.ts
 import { NextResponse } from "next/server";
 
+export const runtime = "edge";
+export const preferredRegion = ["iad1", "sfo1", "pdx1"];
 export const dynamic = "force-dynamic";
 export const revalidate = 30;
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const symbol = searchParams.get("symbol") || "BTCUSDT";
-
-  const endpoint = `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=1`;
+  const symbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+  const url = `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=1`;
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetch(url, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
@@ -19,43 +19,30 @@ export async function GET(req: Request) {
       next: { revalidate: 30 },
     });
 
-    // Detect non-JSON or blocked responses
     const text = await res.text();
-    if (!res.ok) {
-      throw new Error(`Upstream error: ${res.status}`);
-    }
+    if (!res.ok) return NextResponse.json({ ok: false, error: `Upstream ${res.status}` }, { status: 502 });
 
-    let data;
+    let data: any;
     try {
       data = JSON.parse(text);
     } catch {
-      return NextResponse.json(
-        { ok: false, error: "Upstream returned non-JSON (likely HTML block)" },
-        { status: 502 }
-      );
+      return NextResponse.json({ ok: false, error: "Upstream non-JSON (blocked/HTML)" }, { status: 502 });
     }
 
-    // Validate Binance format
-    if (!Array.isArray(data) || data.length === 0 || !data[0].fundingRate) {
-      return NextResponse.json(
-        { ok: false, error: "No valid funding data" },
-        { status: 502 }
-      );
+    if (!Array.isArray(data) || !data[0]?.fundingRate) {
+      return NextResponse.json({ ok: false, error: "No funding data" }, { status: 502 });
     }
 
     return NextResponse.json(
       {
         ok: true,
-        fundingRate: parseFloat(data[0].fundingRate),
-        fundingTime: data[0].fundingTime,
         symbol,
+        fundingRate: Number(data[0].fundingRate),
+        fundingTime: data[0].fundingTime,
       },
       { status: 200 }
     );
-  } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: String(err?.message || err) },
-      { status: 500 }
-    );
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
