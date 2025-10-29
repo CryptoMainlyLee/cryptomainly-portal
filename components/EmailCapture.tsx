@@ -7,40 +7,23 @@ export default function EmailCapture() {
   const [telegram, setTelegram] = useState("");
   const [agree, setAgree] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState<null | "ok" | "err">(null);
-  const [msg, setMsg] = useState("");
+  const [ok, setOk] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !agree || loading) return;
 
     setLoading(true);
-    setDone(null);
-    setMsg("");
-
     try {
-      // minimal payload; backend derives IP and adds source
-      const res = await fetch("/api/subscribe", {
+      await fetch("/api/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, telegram }),
-      });
-
-      // UI stays positive even if Sheets/API is slow — we log problems
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        console.warn("Subscribe non-200:", res.status, t);
-      }
-
-      setDone("ok");
-      setMsg("Subscribed! You’ll get updates soon.");
+      }).catch(() => {});
+      // Always show success to the user (per our behavior)
+      setOk(true);
       setEmail("");
       setTelegram("");
-    } catch (err) {
-      console.warn("Subscribe error:", err);
-      // still show success to the user (requested behavior)
-      setDone("ok");
-      setMsg("Subscribed! You’ll get updates soon.");
     } finally {
       setLoading(false);
     }
@@ -50,97 +33,110 @@ export default function EmailCapture() {
     <section
       aria-label="Stay updated"
       className="
-        w-full max-w-[340px]             /* match price widget width */
-        rounded-xl border border-white/10
+        w-full max-w-[360px]            /* compact to match right rail */
+        rounded-2xl border border-white/10
         bg-[#0b1320]/70 backdrop-blur
         shadow-lg shadow-black/30
-        p-3 md:p-4                        /* tighter padding */
-        text-white
+        p-4 text-white
       "
     >
-      <h3 className="text-sm font-semibold text-white/90">
-        Stay updated — free insights
-      </h3>
+      {/* Header row */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-[15px] font-semibold">Stay updated — free insights</h3>
+        <span className="text-[11px] text-white/55">Unsubscribe anytime.</span>
+      </div>
 
-      <form onSubmit={onSubmit} className="mt-2 space-y-2">
-        <div className="grid gap-2">
-          <label className="sr-only" htmlFor="cm-email">Email</label>
+      <form onSubmit={onSubmit} className="mt-3 space-y-3">
+        {/* Email */}
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-70">
+            {/* mail icon */}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M4 6h16v12H4z" stroke="currentColor" strokeWidth="1.5" opacity=".6" />
+              <path d="M4 7l8 6 8-6" stroke="currentColor" strokeWidth="1.5" opacity=".6" />
+            </svg>
+          </span>
           <input
-            id="cm-email"
             type="email"
             inputMode="email"
             autoComplete="email"
-            placeholder="you@email.co.uk"
+            placeholder="Enter email here"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
             className="
-              h-9 px-3 text-sm rounded-lg
-              bg-black/30 border border-white/12
-              placeholder-white/40
-              outline-none focus:border-yellow-400/60
-            "
-          />
-
-          <label className="sr-only" htmlFor="cm-telegram">Telegram</label>
-          <input
-            id="cm-telegram"
-            type="text"
-            placeholder="Telegram user (optional)"
-            value={telegram}
-            onChange={(e) => setTelegram(e.target.value)}
-            className="
-              h-9 px-3 text-sm rounded-lg
-              bg-black/30 border border-white/12
-              placeholder-white/40
+              w-full h-10 pl-9 pr-3 text-[13px]
+              rounded-full border border-white/12
+              bg-black/30 placeholder-white/45
               outline-none focus:border-yellow-400/60
             "
           />
         </div>
 
-        <label className="flex items-center gap-2 text-xs text-white/70 select-none">
+        {/* Telegram */}
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-70">
+            {/* paper-plane icon */}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M21 3L3 10l7 3 3 7 8-17z" stroke="currentColor" strokeWidth="1.5" opacity=".65" />
+            </svg>
+          </span>
+          <input
+            type="text"
+            placeholder="Telegram name"
+            value={telegram}
+            onChange={(e) => setTelegram(e.target.value)}
+            className="
+              w-full h-10 pl-9 pr-3 text-[13px]
+              rounded-full border border-white/12
+              bg-black/30 placeholder-white/45
+              outline-none focus:border-yellow-400/60
+            "
+          />
+        </div>
+
+        {/* Consent */}
+        <label className="flex items-center gap-2 text-[12px] text-white/75">
           <input
             type="checkbox"
             checked={agree}
             onChange={(e) => setAgree(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-white/20 bg-black/30"
+            className="h-4 w-4 rounded border-white/20 bg-black/30"
           />
           I agree to receive updates, see the{" "}
-          <a href="/privacy" className="underline text-white/90 hover:text-yellow-300">
-            privacy notice
-          </a>.
+          <a href="/privacy" className="underline hover:text-yellow-300">privacy notice</a>.
         </label>
 
-        <button
-          type="submit"
-          disabled={loading || !agree || !email}
-          className="
-            h-9 px-3 text-sm font-semibold
-            rounded-lg text-black
-            bg-yellow-400/90 hover:bg-yellow-300
-            disabled:opacity-50 disabled:cursor-not-allowed
-            shadow
-          "
-        >
-          {loading ? "Sending…" : "Get updates"}
-        </button>
-
-        {/* tiny helper text */}
-        <p className="text-[11px] leading-4 text-white/55 pt-1">
-          Tip: Include your Telegram username to be added to CryptoMainly exclusive Telegram Groups.
-          Receive VIP offer pings and market alerts first.
-        </p>
-
-        {done && (
-          <div
-            aria-live="polite"
-            className={`text-[12px] mt-1 ${
-              done === "ok" ? "text-emerald-300" : "text-red-300"
-            }`}
+        {/* Button + inline success text */}
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={loading || !agree || !email}
+            className="
+              inline-flex items-center justify-center
+              h-10 px-4 text-[13px] font-semibold
+              rounded-full text-black
+              bg-yellow-400/90 hover:bg-yellow-300
+              disabled:opacity-50 disabled:cursor-not-allowed
+              shadow
+            "
           >
-            {msg}
-          </div>
-        )}
+            {loading ? "Sending…" : "Get updates"}
+          </button>
+
+          {ok && (
+            <span className="text-[13px] text-emerald-300">
+              Success — welcome aboard!
+            </span>
+          )}
+        </div>
+
+        {/* Tip */}
+        <p className="text-[11px] leading-4 text-white/60">
+          Top Tip: Include your Telegram username to be added to
+          CryptoMainly exclusive Telegram Groups. Receive VIP offer pings
+          and market alerts first.
+        </p>
       </form>
     </section>
   );
