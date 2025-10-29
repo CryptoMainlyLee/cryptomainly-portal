@@ -1,4 +1,3 @@
-// components/GlobalMarketBar.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -17,7 +16,6 @@ function num(n: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
 }
 function money(n: number) {
-  // show T/B for readability
   if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
   if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   return `$${num(n)}`;
@@ -32,12 +30,14 @@ export default function GlobalMarketBar({ refreshMs = 60000 }: { refreshMs?: num
     const load = async () => {
       try {
         setErr(null);
-        const res = await fetch("https://api.coingecko.com/api/v3/global", {
-          next: { revalidate: 60 },
-          cache: "no-store",
-        });
+        // 🔸 minimal change: call our proxy
+        const res = await fetch("/api/cg/global", { cache: "no-store" });
         const json = await res.json();
+
+        // If proxy bubbled a soft error, keep old UI text
         const d = json?.data;
+        if (!d) throw new Error("no-data");
+
         const out: GlobalStats = {
           coins: d?.active_cryptocurrencies ?? 0,
           markets: d?.markets ?? 0,
@@ -48,7 +48,7 @@ export default function GlobalMarketBar({ refreshMs = 60000 }: { refreshMs?: num
           mcChange24h: d?.market_cap_change_percentage_24h_usd ?? 0,
         };
         setG(out);
-      } catch (e: any) {
+      } catch {
         setErr("failed to fetch");
       }
     };
@@ -63,7 +63,11 @@ export default function GlobalMarketBar({ refreshMs = 60000 }: { refreshMs?: num
         <>
           <span>Coins: <span className="text-white">{num(g.coins)}</span></span>
           <span>Exchanges: <span className="text-white">{num(g.markets)}</span></span>
-          <span>Market Cap: <span className="text-white">{money(g.marketCap)}</span> <span className={g.mcChange24h >= 0 ? "text-green-400" : "text-red-400"}>{g.mcChange24h >= 0 ? "▲" : "▼"} {Math.abs(g.mcChange24h).toFixed(2)}%</span></span>
+          <span>Market Cap: <span className="text-white">{money(g.marketCap)}</span>{" "}
+            <span className={g.mcChange24h >= 0 ? "text-green-400" : "text-red-400"}>
+              {g.mcChange24h >= 0 ? "▲" : "▼"} {Math.abs(g.mcChange24h).toFixed(2)}%
+            </span>
+          </span>
           <span>24h Vol: <span className="text-white">{money(g.vol24h)}</span></span>
           <span>Dominance: <span className="text-white">BTC {g.btcDom.toFixed(1)}% · ETH {g.ethDom.toFixed(1)}%</span></span>
         </>

@@ -1,32 +1,36 @@
 import { NextResponse } from "next/server";
 
-const API = "https://api.coingecko.com/api/v3/global";
-
-export const revalidate = 60; // ISR-style cache at the edge (60s)
+export const runtime = "edge"; // fast, low-latency proxy
 
 export async function GET() {
   try {
-    const res = await fetch(API, {
-      headers: {
-        "x-cg-demo-api-key": process.env.COINGECKO_API_KEY || "",
-      },
-      // in case you’re on dev and don’t want full caching:
-      // cache: "no-store",
+    // Hit CoinGecko from the server (no browser CORS/rate-limit noise)
+    const r = await fetch("https://api.coingecko.com/api/v3/global", {
+      // keep it fresh enough but not spamming their API
       next: { revalidate: 60 },
+      // do not cache at the edge between requests
+      cache: "no-store",
+      headers: {
+        // some CDNs/API gateways like a UA
+        "User-Agent": "cryptomainly-portal/1.0",
+        Accept: "application/json",
+      },
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      return NextResponse.json({ error: `Coingecko ${res.status} ${text}` }, { status: res.status });
+    if (!r.ok) {
+      // Bubble a soft error with a consistent shape for the client
+      return NextResponse.json(
+        { ok: false, status: r.status, error: "fetch_upstream_failed" },
+        { status: 200 }
+      );
     }
 
-    const data = await res.json();
-    return NextResponse.json(data, {
-      headers: {
-        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=30",
-      },
-    });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Network error" }, { status: 500 });
+    const json = await r.json();
+    return NextResponse.json(json, { status: 200 });
+  } catch (e) {
+    return NextResponse.json(
+      { ok: false, error: "proxy_exception" },
+      { status: 200 }
+    );
   }
 }
