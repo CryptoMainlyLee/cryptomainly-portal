@@ -1,17 +1,13 @@
-// Global taker long/short ratio with mirror fallback
+// Global long/short account ratio (Binance)
 import { NextResponse } from "next/server";
-
 export const dynamic = "force-dynamic";
 
-const PRIMARY = "https://fapi.binance.com";
-const MIRROR  = "https://data-api.binance.vision";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
-async function getJSON(url: string) {
+async function hit(url: string) {
   const res = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; CryptoMainlyBot/1.0)"
-    },
+    headers: { "User-Agent": UA, Referer: "https://www.cryptomainly.co.uk/" },
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -21,31 +17,34 @@ async function getJSON(url: string) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const symbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+    const symbol = (searchParams.get("symbol") || "").toUpperCase();
+    if (!symbol) return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
 
-    // takerlongshortRatio returns [{ longShortRatio: "2.34", ... }]
-    // interval 5m, last 1
-    const path = `/futures/data/takerlongshortRatio?symbol=${symbol}&period=5m&limit=1`;
+    // 5m window is fine for the widget—return latest point
+    const qs = `symbol=${symbol}&period=5m&limit=1`;
+    const urls = [
+      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?${qs}`,
+      `https://api.binance.com/futures/data/globalLongShortAccountRatio?${qs}`,
+    ];
 
-    let data: any;
-    try {
-      data = await getJSON(`${PRIMARY}${path}`);
-    } catch {
-      data = await getJSON(`${MIRROR}${path}`);
+    let data: any = null;
+    let lastErr: any = null;
+    for (const u of urls) {
+      try {
+        const arr = await hit(u);
+        data = Array.isArray(arr) && arr.length ? arr[0] : null;
+        if (data) break;
+      } catch (e) {
+        lastErr = e;
+      }
     }
+    if (!data) throw lastErr || new Error("No data");
 
-    const latest = Array.isArray(data) && data[0] ? data[0] : null;
-    const ratio = latest ? Number(latest.longShortRatio) : NaN;
+    const value =
+      typeof data.longShortRatio === "string" ? parseFloat(data.longShortRatio) : Number(data.longShortRatio);
 
-    if (!isFinite(ratio)) {
-      return NextResponse.json({ ok: false, error: "Upstream long/short parse error" }, { status: 502 });
-    }
-
-    return NextResponse.json({ ok: true, value: ratio, source: "binance" }, { status: 200 });
+    return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: String(err?.message || err) },
-      { status: 502 }
-    );
+    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
   }
 }

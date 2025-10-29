@@ -1,17 +1,15 @@
-// Funding rate (latest) with mirror fallback
+// Funding rate (last known) for a futures symbol
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const PRIMARY = "https://fapi.binance.com";
-const MIRROR  = "https://data-api.binance.vision";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
-async function getJSON(url: string) {
+async function hit(url: string) {
   const res = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; CryptoMainlyBot/1.0)"
-    },
+    headers: { "User-Agent": UA, Referer: "https://www.cryptomainly.co.uk/" },
+    // Avoid caching at the edge
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -21,31 +19,31 @@ async function getJSON(url: string) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const symbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+    const symbol = (searchParams.get("symbol") || "").toUpperCase();
+    if (!symbol) return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
 
-    // fundingRate returns an array of records; we want the latest
-    const path = `/futures/data/fundingRate?symbol=${symbol}&limit=1`;
+    // Primary + fallback mirrors
+    const urls = [
+      `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
+      `https://api.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
+    ];
 
-    let data: any;
-    try {
-      data = await getJSON(`${PRIMARY}${path}`);
-    } catch {
-      data = await getJSON(`${MIRROR}${path}`);
+    let data: any = null;
+    let lastErr: any = null;
+    for (const u of urls) {
+      try {
+        const arr = await hit(u);
+        data = Array.isArray(arr) && arr.length ? arr[0] : null;
+        if (data) break;
+      } catch (e) {
+        lastErr = e;
+      }
     }
+    if (!data) throw lastErr || new Error("No data");
 
-    // [{ fundingRate: "-0.0001", fundingTime: 1710000000000, ... }]
-    const latest = Array.isArray(data) && data[0] ? data[0] : null;
-    const value = latest ? Number(latest.fundingRate) : NaN;
-
-    if (!isFinite(value)) {
-      return NextResponse.json({ ok: false, error: "Upstream funding parse error" }, { status: 502 });
-    }
-
-    return NextResponse.json({ ok: true, value, source: "binance" }, { status: 200 });
+    const value = typeof data.fundingRate === "string" ? parseFloat(data.fundingRate) : null;
+    return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: String(err?.message || err) },
-      { status: 502 }
-    );
+    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
   }
 }

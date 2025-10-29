@@ -1,18 +1,13 @@
-// Open Interest (latest) via Binance futures data, with mirror fallback
+// Open interest (contracts) for a futures symbol
 import { NextResponse } from "next/server";
-
 export const dynamic = "force-dynamic";
 
-const PRIMARY = "https://fapi.binance.com";
-const MIRROR  = "https://data-api.binance.vision";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
-async function getJSON(url: string) {
+async function hit(url: string) {
   const res = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; CryptoMainlyBot/1.0)"
-    },
-    // avoid Next's fetch caching here
+    headers: { "User-Agent": UA, Referer: "https://www.cryptomainly.co.uk/" },
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -22,31 +17,31 @@ async function getJSON(url: string) {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const symbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase();
+    const symbol = (searchParams.get("symbol") || "").toUpperCase();
+    if (!symbol) return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
 
-    // openInterestHist returns an array; we only need the latest point.
-    const path = `/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=1`;
+    const urls = [
+      `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
+      `https://api.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
+    ];
 
-    let data: any;
-    try {
-      data = await getJSON(`${PRIMARY}${path}`);
-    } catch {
-      data = await getJSON(`${MIRROR}${path}`);
+    let data: any = null;
+    let lastErr: any = null;
+    for (const u of urls) {
+      try {
+        data = await hit(u);
+        if (data) break;
+      } catch (e) {
+        lastErr = e;
+      }
     }
+    if (!data) throw lastErr || new Error("No data");
 
-    // Expected shape: [{ sumOpenInterest: "xxxxx", ... }]
-    const latest = Array.isArray(data) && data[0] ? data[0] : null;
-    const value = latest ? Number(latest.sumOpenInterest) : NaN;
+    const value =
+      typeof data.openInterest === "string" ? parseFloat(data.openInterest) : Number(data.openInterest);
 
-    if (!isFinite(value)) {
-      return NextResponse.json({ ok: false, error: "Upstream OI parse error" }, { status: 502 });
-    }
-
-    return NextResponse.json({ ok: true, value, source: "binance" }, { status: 200 });
+    return NextResponse.json({ ok: true, value, source: "binance" });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: String(err?.message || err) },
-      { status: 502 }
-    );
+    return NextResponse.json({ ok: false, error: String(err?.message || err) }, { status: 502 });
   }
 }
