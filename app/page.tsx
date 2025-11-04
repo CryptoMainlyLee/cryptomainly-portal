@@ -133,8 +133,7 @@ function ChartPreview() {
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/45">
-        VIP members can use TradingView’s Share → Copy Chart to recreate their
-        own version. Paste a new link above to update this preview.
+        VIP member's are able to use TradingView’s <span className="font-semibold text-white">Share → Copy Chart to duplicate and create their own version of the chart on TradingView.
       </p>
     </Card>
   );
