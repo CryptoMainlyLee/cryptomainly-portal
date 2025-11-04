@@ -147,7 +147,7 @@ function ChartPreviewWidget() {
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        Only TradingView snapshot links are accepted. The link is stored locally on your device.
+        VIP member's are able to use TradingView’s Share → Copy Chart to copy and create their own version of the chart on TradingView.
       </p>
     </div>
   );
