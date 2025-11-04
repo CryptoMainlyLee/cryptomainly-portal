@@ -8,19 +8,28 @@ import PriceWidget from "@/components/PriceWidget";
 import MarketMetricsWidget from "@/components/MarketMetricsWidget";
 import EmailCapture from "@/components/EmailCapture";
 
-/* ───────────────── Chart Preview (top-left) ───────────────── */
+/* ───────────────── Chart Preview (top-left) with PIN + whitelist ───────────────── */
 function ChartPreviewWidget() {
   const LS_KEY = "cm_chart_url";
+  const SS_EDIT = "cm_chart_edit";
   const [input, setInput] = useState<string>("");
   const [snapshotId, setSnapshotId] = useState<string>("");
+  const [editEnabled, setEditEnabled] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
 
-  // Pull last used link from localStorage
+  // Optional PIN (client-readable)
+  const EDIT_PIN = process.env.NEXT_PUBLIC_CHART_PIN || "";
+
+  // Pull last used link + edit state from storage
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem(LS_KEY) : "";
     if (saved) {
       setInput(saved);
       setSnapshotId(extractId(saved));
     }
+    const unlocked =
+      typeof window !== "undefined" ? sessionStorage.getItem(SS_EDIT) === "1" : false;
+    setEditEnabled(unlocked);
   }, []);
 
   // Persist on change
@@ -33,46 +42,94 @@ function ChartPreviewWidget() {
   }, [input]);
 
   function extractId(url: string): string {
-    // Accepts: https://www.tradingview.com/x/SjjTTtGZ/  (or with query/without trailing slash)
-    const m = url.trim().match(/tradingview\.com\/x\/([A-Za-z0-9]+)/i);
+    // Strict whitelist: https://www.tradingview.com/x/<ID> (alphanumeric only)
+    const m = url
+      .trim()
+      .match(/^https?:\/\/(?:www\.)?tradingview\.com\/x\/([A-Za-z0-9]+)\/?(?:\?.*)?$/i);
     return m?.[1] ?? "";
+  }
+
+  function handleChange(v: string) {
+    setError("");
+    setInput(v);
+    const id = extractId(v);
+    if (!id && v.trim().length > 0) {
+      setError(
+        "Invalid TradingView link. Use the 'Share → Copy link' snapshot format (https://www.tradingview.com/x/ID/)"
+      );
+    }
+    setSnapshotId(id);
+  }
+
+  function unlock() {
+    if (!EDIT_PIN) {
+      setEditEnabled(true);
+      sessionStorage.setItem(SS_EDIT, "1");
+      return;
+    }
+    const entered = window.prompt("Enter PIN to edit chart link:") || "";
+    if (entered === EDIT_PIN) {
+      setEditEnabled(true);
+      sessionStorage.setItem(SS_EDIT, "1");
+    } else {
+      alert("Incorrect PIN.");
+    }
   }
 
   const id = snapshotId || extractId(input);
   const imgUrl = id ? `https://s3.tradingview.com/snapshots/${id[0].toLowerCase()}/${id}.png` : "";
-  const tvUrl = id ? `https://www.tradingview.com/x/${id}/` : "";
+  const tvUrl  = id ? `https://www.tradingview.com/x/${id}/` : "";
 
   return (
     <div className="w-[340px] rounded-2xl bg-white/5 ring-1 ring-white/10 backdrop-blur p-3">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm font-semibold text-white/80">Chart Preview</div>
-        {id ? (
-          <Link
-            href={tvUrl}
-            target="_blank"
-            className="text-xs font-semibold text-amber-300 hover:text-amber-200"
-          >
-            Open
-          </Link>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {id ? (
+            <Link
+              href={tvUrl}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="text-xs font-semibold text-amber-300 hover:text-amber-200"
+            >
+              Open
+            </Link>
+          ) : null}
+
+          {!editEnabled ? (
+            <button
+              onClick={unlock}
+              className="rounded-md bg-white/10 px-2 py-1 text-[11px] font-semibold text-white ring-1 ring-white/15 hover:bg-white/15"
+              title={EDIT_PIN ? "Locked (PIN required)" : "Unlock edit"}
+            >
+              Edit 🔒
+            </button>
+          ) : (
+            <span className="rounded-md bg-emerald-500/20 px-2 py-1 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-400/30">
+              Edit ✓
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Input */}
-      <input
-        value={input}
-        onChange={(e) => {
-          setInput(e.target.value);
-          setSnapshotId(extractId(e.target.value));
-        }}
-        placeholder="Paste TradingView link e.g. https://www.tradingview.com/x/SjjTTtGZ/"
-        className="mb-3 w-full rounded-lg bg-black/30 px-3 py-2 text-xs text-white placeholder:text-white/40 ring-1 ring-white/10 outline-none focus:ring-2 focus:ring-amber-400/50"
-      />
+      {/* Input (only visible in edit mode) */}
+      {editEnabled && (
+        <>
+          <input
+            value={input}
+            onChange={(e) => handleChange(e.target.value)}
+            placeholder="Paste TradingView link e.g. https://www.tradingview.com/x/SjjTTtGZ/"
+            spellCheck={false}
+            className="mb-2 w-full rounded-lg bg-black/30 px-3 py-2 text-xs text-white placeholder:text-white/40 ring-1 ring-white/10 outline-none focus:ring-2 focus:ring-amber-400/50"
+          />
+          {error && <div className="mb-2 text-[11px] text-rose-300">{error}</div>}
+        </>
+      )}
 
       {/* Preview */}
       <div className="overflow-hidden rounded-xl ring-1 ring-white/10 bg-black/30">
         {id ? (
-          <Link href={tvUrl} target="_blank">
-            {/* Snapshot images are static; if a new shot uses the same ID, add a cache-busting param if needed */}
+          <Link href={tvUrl} target="_blank" rel="noopener noreferrer nofollow">
             <img
               src={imgUrl}
               alt={`TradingView snapshot ${id}`}
@@ -82,13 +139,15 @@ function ChartPreviewWidget() {
           </Link>
         ) : (
           <div className="flex items-center justify-center py-10 text-xs text-white/50">
-            Paste a TradingView share link to preview
+            {editEnabled
+              ? "Paste a TradingView share link to preview"
+              : "Chart is locked. Click Edit to change."}
           </div>
         )}
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        VIP member's are able to use TradingView’s <span className="font-semibold text-white">Share → Copy Chart</span> to copy and create their own version of the chart on TradingView.
+        VIP member's are able to use TradingView’s Share → Copy Chart to copy and create their own version of the chart on TradingView.
       </p>
     </div>
   );

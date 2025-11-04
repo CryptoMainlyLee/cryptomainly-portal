@@ -81,7 +81,7 @@ function ChartPreviewWidget() {
   const tvUrl  = id ? `https://www.tradingview.com/x/${id}/` : "";
 
   return (
-    <div className="w-[340px] rounded-2xl bg-white/5 ring-1 ring-white/10 backdrop-blur p-3">
+    <div className="w-[408px] rounded-2xl bg-white/5 ring-1 ring-white/10 backdrop-blur p-3">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm font-semibold text-white/80">Chart Preview</div>
         <div className="flex items-center gap-2">
@@ -147,7 +147,7 @@ function ChartPreviewWidget() {
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        Only TradingView snapshot links are accepted. The link is stored locally on your device.
+        VIP member's are able to use TradingView’s <strong className="text-white">Share → Copy Chart</strong> to copy and create their own version of my chart on TradingView.
       </p>
     </div>
   );
@@ -168,6 +168,32 @@ const GlowStyles = () => (
     }
   `}</style>
 );
+
+// Minimal wrapper that overlays a 24h trend arrow on top-right of MarketMetricsWidget
+function MetricsWithTrend(){
+  const [trend, setTrend] = useState<'up' | 'down' | 'flat'>('flat');
+  const [mounted, setMounted] = useState(false);
+  const id = 'metrics-' + (typeof window !== 'undefined' ? (window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)) : '0');
+  useEffect(()=>{ setMounted(true); },[]);
+  useEffect(()=>{
+    if(!mounted) return;
+    const el = document.getElementById(id);
+    if(!el) return;
+    const txt = el.textContent || '';
+    const m = txt.match(/[+\-]\s?\d+(?:\.\d+)?\s?%/);
+    setTrend(m ? (m[0].trim().startsWith('-') ? 'down' : 'up') : 'flat');
+  },[mounted,id]);
+  return (
+    <div id={id} className="relative">
+      <MarketMetricsWidget />
+      <div className="pointer-events-none absolute right-2 top-2 text-xs font-bold">
+        {trend === 'up' && <span className="text-green-400">▲</span>}
+        {trend === 'down' && <span className="text-rose-400">▼</span>}
+        {trend === 'flat' && <span className="text-white/30">•</span>}
+      </div>
+    </div>
+  );
+}
 
 /** Fixed CTA bar (mobile) */
 function MobileCTABar() {
@@ -308,7 +334,7 @@ export default function Page() {
         </div>
 
         <div className="fixed left-6 bottom-6 z-30 hidden md:block">
-          <MarketMetricsWidget />
+          <MetricsWithTrend />
         </div>
 
         {/* Main container */}
@@ -337,7 +363,7 @@ export default function Page() {
             </div>
 
             <div className="w-full max-w-[340px]">
-              <MarketMetricsWidget />
+              <MetricsWithTrend />
             </div>
 
             {/* Email capture moved BELOW metrics on mobile */}
@@ -346,7 +372,7 @@ export default function Page() {
             </div>
 
             {/* Mobile Chart Preview (stacked) */}
-            <div className="w-full max-w-[340px]">
+            <div className="w-full max-w-[408px]">
               <ChartPreviewWidget />
             </div>
           </div>
@@ -485,16 +511,23 @@ export default function Page() {
                 <Link
                   href="https://youtube.com/@CryptoMainly"
                   target="_blank"
-                  className="rounded-full bg-white/80 px-4 py-1.5 text-sm font-semibold text-black hover:bg-white"
+                  className="inline-flex items-center gap-2 rounded-full bg-white/80 px-4 py-1.5 text-sm font-semibold text-black hover:bg-white"
                 >
-                  Subscribe
+                  <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24">
+                    <rect x="2" y="5" width="20" height="14" rx="4" fill="#FF0000" />
+                    <path d="M10 9l6 3-6 3V9z" fill="#fff" />
+                  </svg>
+                  <span>Subscribe</span>
                 </Link>
                 <Link
                   href="https://x.com/CryptoMainly"
                   target="_blank"
-                  className="rounded-full bg-black/10 px-4 py-1.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15"
+                  className="inline-flex items-center gap-2 rounded-full bg-black/10 px-4 py-1.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15"
                 >
-                  Follow
+                  <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18.146 2H21l-7.356 8.4L22 22h-5.318l-4.164-5.13L7.6 22H4.746l7.78-8.887L2 2h5.318l3.794 4.672L18.146 2Zm-1.87 18h1.23L7.848 4h-1.23L16.276 20Z"/>
+                  </svg>
+                  <span>Follow</span>
                 </Link>
               </div>
             </div>
@@ -578,7 +611,14 @@ export default function Page() {
                   className="group flex items-start gap-3 rounded-2xl bg-white/5 p-4 ring-1 ring-white/10 transition hover:bg-white/10"
                 >
                   <div className="grid h-9 w-9 shrink-0 place-content-center rounded-xl bg-white/10 ring-1 ring-white/10">
-                    <span className="text-base">{link.icon}</span>
+                    {link.title === "YouTube" ? (
+                      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="2" y="5" width="20" height="14" rx="4" fill="#FF0000" />
+                        <path d="M10 9l6 3-6 3V9z" fill="#fff" />
+                      </svg>
+                    ) : (
+                      <span className="text-base">{link.icon}</span>
+                    )}
                   </div>
                   <div className="flex flex-col flex-1">
                     <div className="flex items-center justify-between">
