@@ -88,7 +88,7 @@ function ChartPreviewWidget() {
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        Tip: VIP member's are able to use TradingView’s <span className="font-semibold text-white">Share → Copy Chart</span> to create their own version of the chart on their own version of Trading View.
+        VIP member's are able to use TradingView’s <span className="font-semibold text-white">Share → Copy Chart</span> to copy and create their own version of the chart on TradingView.
       </p>
     </div>
   );
