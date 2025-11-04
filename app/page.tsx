@@ -8,6 +8,93 @@ import PriceWidget from "@/components/PriceWidget";
 import MarketMetricsWidget from "@/components/MarketMetricsWidget";
 import EmailCapture from "@/components/EmailCapture";
 
+/* ───────────────── Chart Preview (top-left) ───────────────── */
+function ChartPreviewWidget() {
+  const LS_KEY = "cm_chart_url";
+  const [input, setInput] = useState<string>("");
+  const [snapshotId, setSnapshotId] = useState<string>("");
+
+  // Pull last used link from localStorage
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem(LS_KEY) : "";
+    if (saved) {
+      setInput(saved);
+      setSnapshotId(extractId(saved));
+    }
+  }, []);
+
+  // Persist on change
+  useEffect(() => {
+    if (input) {
+      try {
+        localStorage.setItem(LS_KEY, input);
+      } catch {}
+    }
+  }, [input]);
+
+  function extractId(url: string): string {
+    // Accepts: https://www.tradingview.com/x/SjjTTtGZ/  (or with query/without trailing slash)
+    const m = url.trim().match(/tradingview\.com\/x\/([A-Za-z0-9]+)/i);
+    return m?.[1] ?? "";
+  }
+
+  const id = snapshotId || extractId(input);
+  const imgUrl = id ? `https://s3.tradingview.com/snapshots/${id[0].toLowerCase()}/${id}.png` : "";
+  const tvUrl = id ? `https://www.tradingview.com/x/${id}/` : "";
+
+  return (
+    <div className="w-[340px] rounded-2xl bg-white/5 ring-1 ring-white/10 backdrop-blur p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-sm font-semibold text-white/80">Chart Preview</div>
+        {id ? (
+          <Link
+            href={tvUrl}
+            target="_blank"
+            className="text-xs font-semibold text-amber-300 hover:text-amber-200"
+          >
+            Open
+          </Link>
+        ) : null}
+      </div>
+
+      {/* Input */}
+      <input
+        value={input}
+        onChange={(e) => {
+          setInput(e.target.value);
+          setSnapshotId(extractId(e.target.value));
+        }}
+        placeholder="Paste TradingView link e.g. https://www.tradingview.com/x/SjjTTtGZ/"
+        className="mb-3 w-full rounded-lg bg-black/30 px-3 py-2 text-xs text-white placeholder:text-white/40 ring-1 ring-white/10 outline-none focus:ring-2 focus:ring-amber-400/50"
+      />
+
+      {/* Preview */}
+      <div className="overflow-hidden rounded-xl ring-1 ring-white/10 bg-black/30">
+        {id ? (
+          <Link href={tvUrl} target="_blank">
+            {/* Snapshot images are static; if a new shot uses the same ID, add a cache-busting param if needed */}
+            <img
+              src={imgUrl}
+              alt={`TradingView snapshot ${id}`}
+              className="w-full h-auto block"
+              loading="eager"
+            />
+          </Link>
+        ) : (
+          <div className="flex items-center justify-center py-10 text-xs text-white/50">
+            Paste a TradingView share link to preview
+          </div>
+        )}
+      </div>
+
+      <p className="mt-2 text-[11px] leading-4 text-white/50">
+        Tip: Use TradingView’s <span className="font-semibold text-white">Share → Copy link</span>.
+        This widget stores the link locally on your device.
+      </p>
+    </div>
+  );
+}
+
 /* Stronger outer halo pulse (used for FREE button) */
 const GlowStyles = () => (
   <style jsx global>{`
@@ -138,7 +225,7 @@ export default function Page() {
       <GlowStyles />
 
       <div
-        className="relative min-h-screen text-white pb-28" /* extra bottom pad so the mobile CTA never overlaps */
+        className="relative min-h-screen text-white pb-28"
         style={{
           background:
             "linear-gradient(180deg, #0a1824 0%, #05131e 60%, #020a14 100%)",
@@ -156,6 +243,12 @@ export default function Page() {
           {/* Email capture sits under prices on desktop (same column/width) */}
           <EmailCapture />
         </div>
+
+        {/* NEW: Top-left Chart Preview */}
+        <div className="fixed left-6 top-6 z-30 hidden md:block">
+          <ChartPreviewWidget />
+        </div>
+
         <div className="fixed left-6 bottom-6 z-30 hidden md:block">
           <MarketMetricsWidget />
         </div>
@@ -173,7 +266,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Mobile snapshot: Price -> Metrics -> Email */}
+          {/* Mobile snapshot: Price -> Metrics -> Email -> Chart Preview */}
           <div className="md:hidden mt-2 flex flex-col gap-4 items-center">
             <div className="w-full max-w-[340px]">
               <div className="mb-2 flex items-center justify-between px-1">
@@ -192,6 +285,11 @@ export default function Page() {
             {/* Email capture moved BELOW metrics on mobile */}
             <div className="w-full max-w-[340px]">
               <EmailCapture />
+            </div>
+
+            {/* Mobile Chart Preview (stacked) */}
+            <div className="w-full max-w-[340px]">
+              <ChartPreviewWidget />
             </div>
           </div>
 
@@ -230,7 +328,7 @@ export default function Page() {
 
                 {/* FREE button with STRONGER dual-layer pulsing halo */}
                 <span className="relative inline-flex">
-                  {/* Outer soft halo (bigger, softer) */}
+                  {/* Outer soft halo */}
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-24 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full"
@@ -242,7 +340,7 @@ export default function Page() {
                       animationDelay: "0.12s",
                     }}
                   />
-                  {/* Core halo (tighter, brighter) */}
+                  {/* Core halo */}
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-20 w-52 -translate-x-1/2 -translate-y-1/2 rounded-full"
@@ -254,7 +352,7 @@ export default function Page() {
                     }}
                   />
 
-                  {/* Actual button (plain & crisp) */}
+                  {/* Actual button */}
                   <Link
                     href="https://t.me/CryptoMainlyPublic"
                     target="_blank"
@@ -376,7 +474,7 @@ export default function Page() {
                 <div className="flex items-center gap-3">
                   <div className="grid h-9 w-9 place-content-center rounded-lg bg-blue-500/90">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                      <path d="M18 2h-3l-3 4-3-4H6l4.5 6L6 22h3l-3-5 3 5h3l-4.5-7L18 2z" />
+                      <path d="M18 2h-3l-3 4-3-4H6l4.5 6L6 22h 3l-3-5 3 5h3l-4.5-7L18 2z" />
                     </svg>
                   </div>
                   <div>
