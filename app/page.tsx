@@ -88,8 +88,7 @@ function ChartPreviewWidget() {
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        Tip: Use TradingView’s <span className="font-semibold text-white">Share → Copy link</span>.
-        This widget stores the link locally on your device.
+        Tip: VIP members are able to use TradingView’s <span className="font-semibold text-white">Share → Copy Chart</span> to create their own version of the chart on their own version of Trading View.
       </p>
     </div>
   );
