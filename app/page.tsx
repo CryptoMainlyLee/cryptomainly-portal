@@ -2,7 +2,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import Image from "next/image";
 import Link from "next/link";
 
 /* ------------------------- Shared tiny helpers ------------------------- */
@@ -31,7 +30,7 @@ function Card({
 const PREVIEW_PLACEHOLDER =
   "https://www.tradingview.com/x/nHllMfx1L/"; // default example
 
-export function ChartPreview() {
+function ChartPreview() {
   // simple client-side PIN gate (optional)
   const [pinOK, setPinOK] = useState(true); // set to false if you want PIN on first load
   const [pin, setPin] = useState("");
@@ -144,7 +143,6 @@ export function ChartPreview() {
 /* ------------------- Brand-faithful inline SVG icons ------------------- */
 
 function YouTubeGlyph({ size = 24 }: { size?: number }) {
-  // Modern YouTube: white play inside red rounded shape
   return (
     <svg
       width={size}
@@ -159,21 +157,13 @@ function YouTubeGlyph({ size = 24 }: { size?: number }) {
           <stop stopColor="#e3002a" offset="1" />
         </linearGradient>
       </defs>
-      <rect
-        x="1.5"
-        y="4"
-        width="21"
-        height="16"
-        rx="5"
-        fill="url(#ytg)"
-      />
+      <rect x="1.5" y="4" width="21" height="16" rx="5" fill="url(#ytg)" />
       <path d="M10 9.5v5l4.5-2.5z" fill="white" />
     </svg>
   );
 }
 
 function XGlyph({ size = 24 }: { size?: number }) {
-  // 2023–2025 X logo: white X on black tile
   return (
     <svg
       width={size}
@@ -323,15 +313,13 @@ export default function Page() {
         {/* Left column */}
         <div className="space-y-6">
           <ChartPreview />
-          {/* You can keep your Market Metrics/Price widgets below as-is */}
-          {/* <MarketMetrics />  etc. */}
+          {/* Keep your other left-side widgets here */}
         </div>
 
         {/* Right column */}
         <div className="space-y-6">
           <HeroBanner />
-          {/* Keep your existing sections below (Quick Links, cards, etc.) */}
-          {/* <QuickLinks /> <MoreSections /> */}
+          {/* Keep your other sections here */}
         </div>
       </div>
     </main>
