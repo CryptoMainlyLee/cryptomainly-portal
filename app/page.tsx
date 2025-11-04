@@ -12,7 +12,7 @@ import EmailCapture from "@/components/EmailCapture";
 function ChartPreviewWidget() {
   const LS_KEY = "cm_chart_url";
   const SS_EDIT = "cm_chart_edit";
-  const DEFAULT_SNAPSHOT_ID = "SjjTTtGZ"; // fallback for mobile so preview is never empty
+  const DEFAULT_SNAPSHOT_ID = "SjjTTtGZ";
   const [input, setInput] = useState<string>("");
   const [snapshotId, setSnapshotId] = useState<string>("");
   const [editEnabled, setEditEnabled] = useState<boolean>(false);
@@ -123,27 +123,37 @@ function ChartPreviewWidget() {
       {/* Preview */}
       <div className="overflow-hidden rounded-xl ring-1 ring-white/10 bg-black/30">
         <Link href={tvUrl} target="_blank" rel="noopener noreferrer nofollow">
-            <img
-              src={imgUrl}
-              alt={`TradingView snapshot ${idToShow}`}
-              className="w-full h-auto block"
-              loading="eager"
-            />
-          </Link>
+          <img
+            src={imgUrl}
+            alt={`TradingView snapshot ${idToShow}`}
+            className="w-full h-auto block"
+            loading="eager"
+          />
+        </Link>
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        Paste a TradingView <span className="font-semibold">Share → Copy link</span> snapshot (format:{" "}
-        <code className="text-white/70">https://www.tradingview.com/x/ID/</code>) and we’ll show the preview.
-        Links are stored locally on your device only. PIN protects editing, not viewing.
+        Only TradingView snapshot links are accepted. The link is stored locally on your device.
       </p>
-
-      <div className="mt-2 text-[10px] text-white/40">
-        Tip: To change or remove the link later, click <span className="font-semibold">Edit</span>.
-      </div>
     </div>
   );
 }
+
+/* Stronger outer halo pulse (used for FREE button) */
+const GlowStyles = () => (
+  <style jsx global>{`
+    @keyframes outerGlowPulse {
+      0%, 100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.55;
+      }
+      50% {
+        transform: translate(-50%, -50%) scale(1.18);
+        opacity: 1;
+      }
+    }
+  `}</style>
+);
 
 /** Fixed CTA bar (mobile) */
 function MobileCTABar() {
@@ -180,12 +190,78 @@ function MobileCTABar() {
 export default function Page() {
   return (
     <>
+      {/* ───────────────── INVISIBLE SEO / SOCIAL METADATA ───────────────── */}
       <Head>
-        <title>CryptoMainly Portal — OLED Fixed CTA V1</title>
-        <meta name="description" content="CryptoMainly Portal — tools, links, and updates for the CryptoMainly community." />
-      </Head>
+        {/* 1) Core SEO */}
+        <title>CryptoMainly | VIP Crypto Signals, G-Bot & Indicator Lab</title>
+        <meta
+          name="description"
+          content="CryptoMainly is your all-in-one crypto trading hub: VIP signals, G-Bot automation, custom indicators, education, and live market metrics for Bitcoin, Ethereum, and more."
+        />
+        <meta
+          name="keywords"
+          content="crypto trading bot, VIP crypto signals, TradingView indicators, X Twitter crypto, Bitget, 3Commas, CryptoMainly VIP, altcoins, crypto strategies, futures trading, Telegram crypto group"
+        />
+        <meta name="robots" content="index, follow" />
+        <meta name="author" content="CryptoMainly" />
+        <meta name="publisher" content="CryptoMainly" />
+        <meta name="language" content="en" />
+        <meta name="revisit-after" content="7 days" />
 
-      {/* Page wrapper */}
+        {/* 2) Extended / Technical */}
+        <link rel="canonical" href="https://cryptomainly.co.uk/" />
+        <meta name="application-name" content="CryptoMainly Portal" />
+        <meta name="rating" content="General" />
+        <meta httpEquiv="Content-Type" content="text/html; charset=UTF-8" />
+        <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#0a1824" />
+        <link rel="icon" href="/favicon.ico" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="manifest" href="/site.webmanifest" />
+
+        {/* 3) Open Graph / Twitter */}
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content="CryptoMainly | VIP Crypto Signals, G-Bot & Indicator Lab" />
+        <meta
+          property="og:description"
+          content="CryptoMainly is your all-in-one crypto trading hub: VIP signals, G-Bot automation, custom indicators, education, and live market metrics for Bitcoin, Ethereum, and more."
+        />
+        <meta property="og:image" content="https://cryptomainly.co.uk/og-image.jpg" />
+        <meta property="og:url" content="https://cryptomainly.co.uk" />
+
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="CryptoMainly | VIP Crypto Signals, G-Bot & Indicator Lab" />
+        <meta
+          name="twitter:description"
+          content="CryptoMainly is your all-in-one crypto trading hub: VIP signals, G-Bot automation, custom indicators, education, and live market metrics for Bitcoin, Ethereum, and more."
+        />
+        <meta name="twitter:image" content="https://cryptomainly.co.uk/og-image.jpg" />
+
+        {/* 4) JSON-LD Schema */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'Organization',
+              name: "CryptoMainly",
+              url: "https://cryptomainly.co.uk",
+              logo: "https://cryptomainly.co.uk/og-image.jpg",
+              sameAs: [
+                "https://twitter.com/CryptoMainly",
+                "https://t.me/CryptoMainlyPublic",
+                "https://www.youtube.com/@CryptoMainly",
+              ],
+              description:
+                "CryptoMainly provides VIP crypto trading signals, automated strategies, education, and advanced indicator tools for professional traders.",
+            }),
+          }}
+        />
+      </Head>
+      {/* ─────────────────────────────────────────────────────────────────── */}
+
+      {/* Background */}
       <div
         className="relative min-h-screen w-full bg-[#040A14] text-white"
         style={{
@@ -203,34 +279,18 @@ export default function Page() {
         <header className="relative z-10">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5 md:px-6">
             <div className="flex items-center gap-3">
-              <img
-                src="/assets/CLogo.png"
-                alt="CryptoMainly Logo"
-                className="h-8 w-8"
-              />
+              <img src="/assets/CLogo.png" alt="CryptoMainly Logo" className="h-8 w-8" />
               <span className="text-lg font-semibold">CryptoMainly Portal</span>
             </div>
 
             <nav className="flex items-center gap-3">
-              <Link
-                href="https://t.me/CryptoMainlyPublic"
-                target="_blank"
-                className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/15"
-              >
+              <Link href="https://t.me/CryptoMainlyPublic" target="_blank" className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/15">
                 Telegram
               </Link>
-              <Link
-                href="https://youtube.com/@CryptoMainly"
-                target="_blank"
-                className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/15"
-              >
+              <Link href="https://youtube.com/@CryptoMainly" target="_blank" className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/15">
                 YouTube
               </Link>
-              <Link
-                href="https://x.com/CryptoMainly"
-                target="_blank"
-                className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/15"
-              >
+              <Link href="https://x.com/CryptoMainly" target="_blank" className="rounded-lg bg-white/10 px-3 py-1.5 text-sm hover:bg-white/15">
                 X
               </Link>
             </nav>
@@ -259,20 +319,12 @@ export default function Page() {
                     "radial-gradient(1000px 300px at -20% -50%, rgba(255,255,255,0.15), transparent), radial-gradient(1200px 350px at 120% -50%, rgba(255,255,255,0.12), transparent)",
                 }}
               >
-                <img
-                  src="/assets/hero-bg.jpg"
-                  alt="Hero"
-                  className="pointer-events-none absolute inset-0 -z-10 h-full w-full object-cover"
-                />
+                <img src="/assets/hero-bg.jpg" alt="Hero" className="pointer-events-none absolute inset-0 -z-10 h-full w-full object-cover" />
 
                 <div className="relative p-6 md:p-8">
                   <div className="flex items-center gap-4">
                     <div className="h-12 w-12 overflow-hidden rounded-full ring-1 ring-white/20 bg-black/30 grid place-content-center">
-                      <img
-                        src="/assets/coin-gold.png"
-                        alt="CryptoMainly badge"
-                        className="h-12 w-12 rounded-full object-cover"
-                      />
+                      <img src="/assets/coin-gold.png" alt="CryptoMainly badge" className="h-12 w-12 rounded-full object-cover" />
                     </div>
                     <div>
                       <div className="text-xs text-white/80">CryptoMainly</div>
@@ -282,39 +334,25 @@ export default function Page() {
 
                   <div className="mt-4 max-w-[70ch] text-sm text-white/80">
                     <p>
-                      Welcome to the CryptoMainly Portal — your hub for our latest indicators, G-Bot automation, VIP
-                      updates, and curated crypto links. Tap a quick link below or explore the widgets on the sides.
+                      Welcome to the CryptoMainly Portal — your hub for our latest indicators, G-Bot automation, VIP updates, and curated crypto links. Tap a quick link below or explore the widgets on the sides.
                     </p>
                   </div>
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <Link
-                      href="https://t.me/CryptoMainlyVIP"
-                      target="_blank"
-                      className="rounded-xl bg-amber-400/90 px-4 py-2 text-sm font-semibold text-black ring-1 ring-amber-300/50 hover:bg-amber-400"
-                    >
+                    <Link href="https://t.me/CryptoMainlyVIP" target="_blank" className="rounded-xl bg-amber-400/90 px-4 py-2 text-sm font-semibold text-black ring-1 ring-amber-300/50 hover:bg-amber-400">
                       Join VIP
                     </Link>
-                    <Link
-                      href="https://t.me/CryptoMainlyPublic"
-                      target="_blank"
-                      className="rounded-xl bg-white/10 px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/15"
-                    >
+                    <Link href="https://t.me/CryptoMainlyPublic" target="_blank" className="rounded-xl bg-white/10 px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/15">
                       Public Group
                     </Link>
-                    <Link
-                      href="https://www.tradingview.com/u/CryptoMainly/"
-                      target="_blank"
-                      className="rounded-xl bg-white/10 px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/15"
-                    >
+                    <Link href="https://www.tradingview.com/u/CryptoMainly/" target="_blank" className="rounded-xl bg-white/10 px-4 py-2 text-sm ring-1 ring-white/10 hover:bg-white/15">
                       TradingView
                     </Link>
                   </div>
 
                   <div className="mt-5 text-[11px] text-white/60">
                     <p>
-                      Trading involves substantial risk. Past performance is not indicative of future results. Do not risk
-                      funds you cannot afford to lose. This is not financial advice. Use at your own risk. Please read full Disclaimer:
+                      Trading involves substantial risk. Past performance is not indicative of future results. Do not risk funds you cannot afford to lose. This is not financial advice. Use at your own risk. Please read full Disclaimer:
                       https://docs.google.com/document/d/1fY-C5aUJVcSbprbijgi3AkXVPNvc9UMNgzVktt-vDxE
                     </p>
                   </div>
@@ -334,11 +372,7 @@ export default function Page() {
                 <div className="flex flex-wrap items-center justify-between gap-4 px-8 py-12 md:px-8">
                   <div className="flex items-center gap-4">
                     <div className="h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/20 bg-black/30 grid place-content-center">
-                      <img
-                        src="/assets/coin-gold.png"
-                        alt="CryptoMainly badge"
-                        className="h-11 w-11 rounded-full object-cover"
-                      />
+                      <img src="/assets/coin-gold.png" alt="CryptoMainly badge" className="h-11 w-11 rounded-full object-cover" />
                     </div>
                     <div>
                       <div className="text-xs text-white/90">YouTube • X (Twitter)</div>
@@ -346,18 +380,10 @@ export default function Page() {
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <Link
-                      href="https://youtube.com/@CryptoMainly"
-                      target="_blank"
-                      className="rounded-full bg-white/80 px-3.5 py-1 text-xs font-semibold text-black hover:bg-white"
-                    >
+                    <Link href="https://youtube.com/@CryptoMainly" target="_blank" className="rounded-full bg-white/80 px-3.5 py-1 text-xs font-semibold text-black hover:bg-white">
                       Subscribe
                     </Link>
-                    <Link
-                      href="https://x.com/CryptoMainly"
-                      target="_blank"
-                      className="rounded-full bg-black/80 px-3.5 py-1 text-xs font-semibold text-white hover:bg-black"
-                    >
+                    <Link href="https://x.com/CryptoMainly" target="_blank" className="rounded-full bg-black/80 px-3.5 py-1 text-xs font-semibold text-white hover:bg-black">
                       Follow
                     </Link>
                   </div>
@@ -369,22 +395,18 @@ export default function Page() {
                   <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="grid h-9 w-9 place-content-center rounded-lg bg-transparent ring-1 ring-white/10">
+                        <div className="grid h-9 w-9 place-content-center rounded-lg bg-red-600/90">
                           <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
                             <rect x="2" y="5" width="20" height="14" rx="3" ry="3" fill="#FF0000"></rect>
                             <polygon points="10,9 16,12 10,15" fill="#FFFFFF"></polygon>
                           </svg>
                         </div>
                         <div>
-                          <div className="text-xs text-white/60">Tutorials • livestreams • deep dives</div>
+                          <div className="text-xs text-white/60">Walkthroughs • deep dives • recaps</div>
                           <div className="font-semibold">YouTube</div>
                         </div>
                       </div>
-                      <Link
-                        href="https://youtube.com/@CryptoMainly"
-                        target="_blank"
-                        className="rounded-full bg-white/80 px-3.5 py-1 text-xs font-semibold text-black hover:bg-white"
-                      >
+                      <Link href="https://youtube.com/@CryptoMainly" target="_blank" className="rounded-full bg-white/80 px-3.5 py-1 text-xs font-semibold text-black hover:bg-white">
                         Subscribe
                       </Link>
                     </div>
@@ -405,11 +427,7 @@ export default function Page() {
                           <div className="font-semibold">X (Twitter)</div>
                         </div>
                       </div>
-                      <Link
-                        href="https://x.com/CryptoMainly"
-                        target="_blank"
-                        className="rounded-full bg-white/80 px-3.5 py-1 text-xs font-semibold text-black hover:bg-white"
-                      >
+                      <Link href="https://x.com/CryptoMainly" target="_blank" className="rounded-full bg-white/80 px-3.5 py-1 text-xs font-semibold text-black hover:bg-white">
                         Follow
                       </Link>
                     </div>
@@ -420,16 +438,16 @@ export default function Page() {
               {/* Quick Links */}
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {[
-                  { icon: "⚙️", title:"Indicator Lab", tag:"Tools", desc:"Custom TradingView indicators", url:"https://www.tradingview.com/u/CryptoMainly/"},
-                  { icon: "🤖", title:"G-Bot Automation", tag:"Signals", desc:"JSON alerts via 3Commas", url:"https://t.me/CryptoMainlyVIP"},
-                  { icon: "📺", title:"YouTube Channel", tag:"Videos", desc:"Guides & livestreams", url:"https://youtube.com/@CryptoMainly"},
-                  { icon: "𝕏", title:"X / Twitter", tag:"Social", desc:"Daily updates", url:"https://x.com/CryptoMainly"},
-                  { icon: "📊", title:"Copyable Charts", tag:"TV", desc:"Member-ready shared charts", url:"https://t.me/CryptoMainlyVIP"},
+                  { icon: "⚙️", title:"Indicator Lab", tag:"Tools", desc:"Custom TradingView indicators", url:"https://www.tradingview.com/u/CryptoMainly/#published-scripts"},
+                  { icon: "✖️", title:"X (Twitter)", tag:"", desc:"Daily updates & alpha threads", url:"https://x.com/CryptoMainly"},
+                  { icon: "▶️", title:"YouTube", tag:"", desc:"Deep dives, education, Shorts", url:"https://youtube.com/@CryptoMainly"},
+                  { icon: "🎵", title:"TikTok", tag:"", desc:"Quick tips & updates", url:"https://www.tiktok.com/@cryptomainly?lang=en-GB"},
+                  { icon: "📊", title:"Trading View", tag:"", desc:"Charting platform (ref) — save 15%", url:"https://www.tradingview.com/pricing/?share_your_love=CryptoMainly"},
+                  { icon: "🏦", title:"Bitget Crypto Exchange", tag:"Join", desc:"Zero-fee spot trading & futures (UK use VPN)", url:"https://www.bitget.com/referral/register?clacCode=WLRHARHW"},
+                  { icon: "🤖", title:"3Commas", tag:"Try", desc:"Automation & bots", url:"https://app.3commas.io/auth/registration?c=tc2002246"},
                   { icon: "🧪", title:"Indicator Testers", tag:"Community", desc:"Help test our tools", url:"https://t.me/CryptoMainlyVIP"},
                   { icon: "🧭", title:"VIP Roadmap", tag:"Docs", desc:"What’s coming next", url:"https://t.me/CryptoMainlyVIP"},
                   { icon: "📜", title:"Disclaimer", tag:"Docs", desc:"Read before trading", url:"https://docs.google.com/document/d/1fY-C5aUJVcSbprbijgi3AkXVPNvc9UMNgzVktt-vDxE"},
-                  { icon: "🏦", title:"Bitget Crypto Exchange", tag:"Referral", desc:"Our preferred exchange", url:"https://www.bitget.com/referral/register?clacCode=WLRHARHW"},
-                  { icon: "🤖", title:"3Commas", tag:"Referral", desc:"Automation & bots", url:"https://app.3commas.io/auth/registration?c=tc2002246"},
                   { icon: "🤝", title:"Contact Us", tag:"", desc:"Sponsorships & partnerships", url:"https://t.me/CryptoMainlyLee"},
                   { icon: "📧", title:"Email Sign-Up", tag:"Form", desc:"Get updates by email", url:"#email"},
                 ].map((link,i)=>(
@@ -447,7 +465,7 @@ export default function Page() {
                         <div className="font-semibold">{link.title}</div>
                         <div className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/70 ring-1 ring-white/10">{link.tag}</div>
                       </div>
-                      <div className="mt-0.5 text-xs text-white/60">{link.desc}</div>
+                      <p className="mt-1 text-xs text-white/60">{link.desc}</p>
                     </div>
                   </Link>
                 ))}
@@ -488,6 +506,8 @@ export default function Page() {
         {/* Mobile CTA Portal */}
         <MobileCTABar />
       </div>
+
+      <GlowStyles />
     </>
   );
 }
