@@ -147,8 +147,7 @@ function ChartPreviewWidget() {
       </div>
 
       <p className="mt-2 text-[11px] leading-4 text-white/50">
-        VIP member's are able to use TradingView’s <strong className="text-white">Share → Copy Chart</strong> to copy and create their own version of the chart on TradingView.
-      </p>
+        VIP member's are able to use TradingView’s <strong className="text-white">Share → Copy Chart</strong> to copy and create their own version of the chart on TradingView.</p>
     </div>
   );
 }
@@ -485,7 +484,7 @@ export default function Page() {
                 <Link
                   href="https://youtube.com/@CryptoMainly"
                   target="_blank"
-                  className="inline-flex items-center gap-2 rounded-full bg-white/80 px-4 py-1.5 text-sm font-semibold text-black hover:bg-white"
+                  className="rounded-full bg-white/80 px-4 py-1.5 text-sm font-semibold text-black hover:bg-white inline-flex items-center gap-2"
                 >
                   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24">
                     <rect x="2" y="5" width="20" height="14" rx="4" fill="#FF0000" />
@@ -496,7 +495,7 @@ export default function Page() {
                 <Link
                   href="https://x.com/CryptoMainly"
                   target="_blank"
-                  className="inline-flex items-center gap-2 rounded-full bg-black/10 px-4 py-1.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15"
+                  className="rounded-full bg-black/10 px-4 py-1.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15 inline-flex items-center gap-2"
                 >
                   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-white">
                     <path d="M18.146 2H21l-7.356 8.4L22 22h-5.318l-4.164-5.13L7.6 22H4.746l7.78-8.887L2 2h5.318l3.794 4.672L18.146 2Zm-1.87 18h1.23L7.848 4h-1.23L16.276 20Z"/>
@@ -513,7 +512,7 @@ export default function Page() {
             <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="grid h-9 w-9 place-content-center rounded-lg bg-white/10 ring-1 ring-white/10">
+                  <div className="grid h-9 w-9 place-content-center rounded-lg bg-red-600/90">
                     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24">
                       <rect x="2" y="5" width="20" height="14" rx="4" fill="#FF0000" />
                       <path d="M10 9l6 3-6 3V9z" fill="#fff" />
