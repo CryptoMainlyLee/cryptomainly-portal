@@ -3,77 +3,86 @@
 import { useEffect, useState } from "react";
 
 type GlobalStats = {
-  coins: number;
-  markets: number;
-  marketCap: number;
-  vol24h: number;
-  btcDom: number;
-  ethDom: number;
-  mcChange24h: number;
+  coins: number | null;
+  exchanges: number | null;
+  mcap: number | null;
+  vol24h: number | null;
+  btcDom: number | null;
+  ethDom: number | null;
+  mcapChange24h: number | null;
 };
 
-function num(n: number) {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(n);
-}
-function money(n: number) {
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  return `$${num(n)}`;
-}
+const formatCount = (n: number | null) =>
+  n == null ? "—" : new Intl.NumberFormat("en-US").format(n);
 
-export default function GlobalMarketBar({ refreshMs = 60000 }: { refreshMs?: number }) {
+const formatMoney = (n: number | null) => {
+  if (n == null) return "—";
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)} T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)} B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)} M`;
+  return `$${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n)}`;
+};
+
+const formatPct = (n: number | null, digits = 1) =>
+  n == null ? "—" : `${n.toFixed(digits)} %`;
+
+export default function GlobalMarketBar({ refreshMs = 90_000 }: { refreshMs?: number }) {
   const [g, setG] = useState<GlobalStats | null>(null);
-  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    let timer: any;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
     const load = async () => {
       try {
-        setErr(null);
-        // ✅ use the internal proxy route for reliability (no CORS / API limits)
-        const res = await fetch("/api/cg/global", { cache: "no-store" });
-        if (!res.ok) throw new Error("network");
+        const res = await fetch("/api/metrics/global", { cache: "no-store" });
+        if (!res.ok) return;
         const d = await res.json();
+        if (!d?.ok || cancelled) return;
 
-        // ✅ updated mapping to match our proxy route’s flattened data structure
-        const out: GlobalStats = {
-          coins: d.coins ?? 0,
-          markets: d.markets ?? 0,
-          marketCap: d.marketCap ?? 0,
-          vol24h: d.vol24h ?? 0,
-          btcDom: d.btcDom ?? 0,
-          ethDom: d.ethDom ?? 0,
-          mcChange24h: d.mcChange24h ?? 0,
-        };
-
-        setG(out);
+        setG({
+          coins: d.coins ?? null,
+          exchanges: d.exchanges ?? null,
+          mcap: d.mcap ?? null,
+          vol24h: d.vol24h ?? null,
+          btcDom: d.btcDom ?? null,
+          ethDom: d.ethDom ?? null,
+          mcapChange24h: d.mcapChange24h ?? null,
+        });
       } catch {
-        setErr("failed to fetch");
+        // Keep the last good snapshot on transient network/upstream errors.
       }
     };
+
     load();
     timer = setInterval(load, refreshMs);
-    return () => clearInterval(timer);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
   }, [refreshMs]);
 
+  const change = g?.mcapChange24h ?? null;
+
   return (
-    <div className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs md:text-[13px] text-white/80 flex flex-wrap gap-x-6 gap-y-2">
-      {g ? (
-        <>
-          <span>Coins: <span className="text-white">{num(g.coins)}</span></span>
-          <span>Exchanges: <span className="text-white">{num(g.markets)}</span></span>
-          <span>
-            Market Cap: <span className="text-white">{money(g.marketCap)}</span>{" "}
-            <span className={g.mcChange24h >= 0 ? "text-green-400" : "text-red-400"}>
-              {g.mcChange24h >= 0 ? "▲" : "▼"} {Math.abs(g.mcChange24h).toFixed(2)}%
+    <div className="mt-6 mb-3 rounded-xl bg-white/5 px-4 py-2 text-[12px] leading-6 text-white/80 ring-1 ring-white/10">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+        <span>Coins: <span className="text-white/90">{formatCount(g?.coins ?? null)}</span></span>
+        <span>Exchanges: <span className="text-white/90">{formatCount(g?.exchanges ?? null)}</span></span>
+        <span>
+          Market Cap: <span className="text-white/90">{formatMoney(g?.mcap ?? null)}</span>{" "}
+          {change != null && (
+            <span className={change >= 0 ? "text-green-400" : "text-red-400"}>
+              {change >= 0 ? "▲" : "▼"} {Math.abs(change).toFixed(2)} %
             </span>
-          </span>
-          <span>24h Vol: <span className="text-white">{money(g.vol24h)}</span></span>
-          <span>Dominance: <span className="text-white">BTC {g.btcDom.toFixed(1)}% · ETH {g.ethDom.toFixed(1)}%</span></span>
-        </>
-      ) : (
-        <span className="opacity-70">{err ?? "Loading..."}</span>
-      )}
+          )}
+        </span>
+        <span>24 h Vol: <span className="text-white/90">{formatMoney(g?.vol24h ?? null)}</span></span>
+        <span>
+          Dominance: <span className="text-white/90">BTC {formatPct(g?.btcDom ?? null)} • ETH {formatPct(g?.ethDom ?? null)}</span>
+        </span>
+      </div>
     </div>
   );
 }

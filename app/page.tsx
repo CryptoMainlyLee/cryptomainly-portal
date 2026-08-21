@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import PriceWidget from "@/components/PriceWidget";
 import MarketMetricsWidget from "@/components/MarketMetricsWidget";
 import EmailCapture from "@/components/EmailCapture";
+import GlobalMarketBar from "@/components/GlobalMarketBar";
 
 /* ───────────────── Chart Preview (top-left) with PIN + whitelist ───────────────── */
 function ChartPreviewWidget() {
@@ -313,16 +314,8 @@ export default function Page() {
 
         {/* Main container */}
         <div className="relative z-10 mx-auto w-full max-w-6xl px-4 pb-32">
-          {/* Market bar */}
-          <div className="mt-6 mb-3 rounded-xl bg-white/5 px-4 py-2 text-[12px] leading-6 text-white/80 ring-1 ring-white/10">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-              <span>Coins: <span className="text-white/90">19,324</span></span>
-              <span>Exchanges: <span className="text-white/90">1,408</span></span>
-              <span>Market Cap: <span className="text-white/90">$3.82 T</span> <span className="text-green-400">▲ 0.01 %</span></span>
-              <span>24 h Vol: <span className="text-white/90">$116.4 B</span></span>
-              <span>Dominance: <span className="text-white/90">BTC 57.9 % • ETH 12.4 %</span></span>
-            </div>
-          </div>
+          {/* Market bar — live CoinGecko data via the same global metrics route used by Market Metrics */}
+          <GlobalMarketBar />
 
           {/* Mobile snapshot: Price -> Metrics -> Email -> Chart Preview */}
           <div className="md:hidden mt-2 flex flex-col gap-4 items-center">

@@ -5,10 +5,13 @@ export const dynamic = "force-dynamic";
 type GlobalPayload = {
   ok: boolean;
   stale: boolean;           // true if served from cache due to upstream issues
+  coins: number | null;
+  exchanges: number | null;
   btcDom: number | null;
   ethDom: number | null;
   mcap: number | null;
   vol24h: number | null;
+  mcapChange24h: number | null;
   ts: number;               // server timestamp (ms)
   error?: string;
 };
@@ -59,10 +62,18 @@ export async function GET() {
     const j = await fetchWithRetry(SOURCE);
     const d = j?.data ?? {};
     const payload = {
+      coins: typeof d.active_cryptocurrencies === "number" ? d.active_cryptocurrencies : null,
+      // CoinGecko's global endpoint calls this field `markets`; it corresponds to
+      // the exchange/market count shown in the global summary.
+      exchanges: typeof d.markets === "number" ? d.markets : null,
       btcDom: typeof d.market_cap_percentage?.btc === "number" ? d.market_cap_percentage.btc : null,
       ethDom: typeof d.market_cap_percentage?.eth === "number" ? d.market_cap_percentage.eth : null,
       mcap: typeof d.total_market_cap?.usd === "number" ? d.total_market_cap.usd : null,
       vol24h: typeof d.total_volume?.usd === "number" ? d.total_volume.usd : null,
+      mcapChange24h:
+        typeof d.market_cap_change_percentage_24h_usd === "number"
+          ? d.market_cap_change_percentage_24h_usd
+          : null,
       ts: now,
     };
     cache = payload;
@@ -73,7 +84,19 @@ export async function GET() {
       return NextResponse.json<GlobalPayload>({ ok: true, stale: true, ...cache, error: String(e?.message || e) }, { headers });
     }
     return NextResponse.json<GlobalPayload>(
-      { ok: false, stale: true, btcDom: null, ethDom: null, mcap: null, vol24h: null, ts: now, error: String(e?.message || e) },
+      {
+        ok: false,
+        stale: true,
+        coins: null,
+        exchanges: null,
+        btcDom: null,
+        ethDom: null,
+        mcap: null,
+        vol24h: null,
+        mcapChange24h: null,
+        ts: now,
+        error: String(e?.message || e),
+      },
       { headers }
     );
   }
