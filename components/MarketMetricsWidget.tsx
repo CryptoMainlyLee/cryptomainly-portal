@@ -61,6 +61,18 @@ const stickySet =
     setter(next);
   };
 
+const updatePair = (
+  setter: React.Dispatch<
+    React.SetStateAction<{ curr: number | null; prev: number | null }>
+  >,
+  next: number | null | undefined
+) => {
+  if (next === null || next === undefined || !Number.isFinite(next)) return;
+  setter((current) =>
+    current.curr === next ? current : { prev: current.curr, curr: next }
+  );
+};
+
 /* ─────────────── component ─────────────── */
 export default function MarketMetricsWidget() {
   // ORIGINAL rows
@@ -77,7 +89,7 @@ export default function MarketMetricsWidget() {
   const setVol24h = (v: number | null | undefined) => stickySet(_setVol24h)(v, vol24h);
   const setFngValue = (v: number | null | undefined) => stickySet(_setFngValue)(v, fngValue);
 
-  // NEW live rows
+  // BTC/ETH derivatives rows
   const [oiBTC, setOiBTC] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
   const [oiETH, setOiETH] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
   const [frBTC, setFrBTC] = useState<{ curr: number | null; prev: number | null }>({ curr: null, prev: null });
@@ -87,16 +99,16 @@ export default function MarketMetricsWidget() {
 
   // stale flags for tiny “catching up…” hint
   const [lastOkGlobal, setLastOkGlobal] = useState<number>(() => Date.now());
-  const [lastOkBinance, setLastOkBinance] = useState<number>(() => Date.now());
+  const [lastOkDerivatives, setLastOkDerivatives] = useState<number>(() => Date.now());
 
   // abort overlap fetches
   const globalAbort = useRef<AbortController | null>(null);
-  const binanceAbort = useRef<AbortController | null>(null);
+  const derivativesAbort = useRef<AbortController | null>(null);
 
   // hydrate from session cache so reloads don’t flash empty
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem("cm_metrics_cache_proxy");
+      const raw = sessionStorage.getItem("cm_metrics_cache_proxy_v2");
       if (raw) {
         const j = JSON.parse(raw);
         _setDomBTC(j.domBTC ?? null);
@@ -112,7 +124,7 @@ export default function MarketMetricsWidget() {
         setLsBTC(j.lsBTC ?? { curr: null, prev: null });
         setLsETH(j.lsETH ?? { curr: null, prev: null });
         setLastOkGlobal(j.lastOkGlobal ?? Date.now());
-        setLastOkBinance(j.lastOkBinance ?? Date.now());
+        setLastOkDerivatives(j.lastOkDerivatives ?? Date.now());
       }
     } catch {}
   }, []);
@@ -120,18 +132,18 @@ export default function MarketMetricsWidget() {
   useEffect(() => {
     try {
       sessionStorage.setItem(
-        "cm_metrics_cache_proxy",
+        "cm_metrics_cache_proxy_v2",
         JSON.stringify({
           domBTC, domETH, mcap, vol24h, fngValue, fngLabel,
           oiBTC, oiETH, frBTC, frETH, lsBTC, lsETH,
-          lastOkGlobal, lastOkBinance,
+          lastOkGlobal, lastOkDerivatives,
         })
       );
     } catch {}
   }, [
     domBTC, domETH, mcap, vol24h, fngValue, fngLabel,
     oiBTC, oiETH, frBTC, frETH, lsBTC, lsETH,
-    lastOkGlobal, lastOkBinance,
+    lastOkGlobal, lastOkDerivatives,
   ]);
 
   /* ─────────── data fetch (minimal changes + fallbacks) ─────────── */
@@ -179,53 +191,50 @@ export default function MarketMetricsWidget() {
     }
   };
 
-  // 2) Live rows via our local proxy (Binance or Coinglass behind /api/metrics/binance)
-  const fetchBinance = async () => {
+  // 2) BTC/ETH derivatives via the existing futures API route, now backed by Bitget public data.
+  //    Binance is deliberately not used here.
+  const fetchDerivatives = async () => {
     try {
-      binanceAbort.current?.abort();
+      derivativesAbort.current?.abort();
       const ac = new AbortController();
-      binanceAbort.current = ac;
+      derivativesAbort.current = ac;
 
-      const read = (s: string, m: "oi" | "fr" | "ls") =>
-        fetch(`/api/metrics/binance?symbol=${s}&metric=${m}`, { cache: "no-store", signal: ac.signal })
-          .then(r => r.ok ? r.json() : null)
-          .catch(() => null);
+      const d = await fetch("/api/metrics/futures", {
+        cache: "no-store",
+        signal: ac.signal,
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
 
-      const [btcOI, ethOI, btcFR, ethFR, btcLS, ethLS] = await Promise.all([
-        read("BTCUSDT", "oi"), read("ETHUSDT", "oi"),
-        read("BTCUSDT", "fr"), read("ETHUSDT", "fr"),
-        read("BTCUSDT", "ls"), read("ETHUSDT", "ls"),
-      ]);
-
-      if (btcOI?.ok) setOiBTC({ prev: btcOI.prev, curr: btcOI.curr });
-      if (ethOI?.ok) setOiETH({ prev: ethOI.prev, curr: ethOI.curr });
-      if (btcFR?.ok) setFrBTC({ prev: btcFR.prev, curr: btcFR.curr });
-      if (ethFR?.ok) setFrETH({ prev: ethFR.prev, curr: ethFR.curr });
-      if (btcLS?.ok) setLsBTC({ prev: btcLS.prev, curr: btcLS.curr });
-      if (ethLS?.ok) setLsETH({ prev: ethLS.prev, curr: ethLS.curr });
-
-      const anyFresh = [btcOI, ethOI, btcFR, ethFR, btcLS, ethLS].some((x: any) => x && x.ok && !x.stale);
-      if (anyFresh) setLastOkBinance(Date.now());
+      if (d?.ok) {
+        updatePair(setOiBTC, d.btc?.oiUsd);
+        updatePair(setOiETH, d.eth?.oiUsd);
+        updatePair(setFrBTC, d.btc?.fundingRate);
+        updatePair(setFrETH, d.eth?.fundingRate);
+        updatePair(setLsBTC, d.btc?.longShortRatio);
+        updatePair(setLsETH, d.eth?.longShortRatio);
+        if (!d.stale) setLastOkDerivatives(Date.now());
+      }
     } catch (e: any) {
       if (e?.name === "AbortError") return;
     }
   };
 
-  // intervals (Binance 30s, Global/FNG 90s, staggered start)
+  // Derivatives refresh every 60s; global/F&G every 90s.
   useEffect(() => {
-    fetchBinance();
+    fetchDerivatives();
     const t1 = setTimeout(fetchOriginal, 1000);
-    const idB = setInterval(fetchBinance, 30_000);
+    const idD = setInterval(fetchDerivatives, 60_000);
     const idG = setInterval(fetchOriginal, 90_000);
     return () => {
-      clearInterval(idB); clearInterval(idG); clearTimeout(t1);
-      globalAbort.current?.abort(); binanceAbort.current?.abort();
+      clearInterval(idD); clearInterval(idG); clearTimeout(t1);
+      globalAbort.current?.abort(); derivativesAbort.current?.abort();
     };
   }, []);
 
   const now = Date.now();
   const showCatchingUp =
-    now - lastOkGlobal > 5 * 60_000 && now - lastOkBinance > 5 * 60_000;
+    now - lastOkGlobal > 5 * 60_000 && now - lastOkDerivatives > 5 * 60_000;
 
   /* ─────────────── render ─────────────── */
   return (
@@ -282,7 +291,7 @@ export default function MarketMetricsWidget() {
         </li>
       </ul>
 
-      {/* ADDED live rows (BTC | ETH) */}
+      {/* BTC/ETH derivatives rows */}
       <ul className="mt-3 space-y-1.5">
         {/* Open Interest */}
         <li className="flex items-center justify-between">
@@ -401,7 +410,7 @@ export default function MarketMetricsWidget() {
 
       {/* Footer credits (as before) */}
       <div className="mt-3 border-t border-white/10 pt-2 text-center text-[11px] leading-snug">
-        <span className="text-white/60">Data provided by </span>
+        <span className="text-white/60">Market data links: </span>
         <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.coinglass.com/">
           Coinglass
         </a>
@@ -410,9 +419,9 @@ export default function MarketMetricsWidget() {
           Alternative.me
         </a>
         <div className="mt-1 text-[10px] text-white/45">
-          Additional live pairs via{" "}
-          <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.binance.com/en/futures-api">
-            Binance
+          Derivatives via{" "}
+          <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.bitget.com/">
+            Bitget
           </a>
         </div>
       </div>
