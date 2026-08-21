@@ -420,7 +420,7 @@ export default function MarketMetricsWidget() {
         </a>
         <div className="mt-1 text-[10px] text-white/45">
           Derivatives via{" "}
-          <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.bitget.com/">
+          <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.bitget.com/referral/register?clacCode=WLRHARHW&from=%2Fevents%2Freferral-all-program&source=events&utmSource=PremierInviter&shareid=telegram">
             Bitget
           </a>
         </div>
