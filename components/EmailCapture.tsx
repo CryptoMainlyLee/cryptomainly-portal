@@ -8,22 +8,37 @@ export default function EmailCapture() {
   const [agree, setAgree] = useState(true);
   const [loading, setLoading] = useState(false);
   const [ok, setOk] = useState(false);
+  const [error, setError] = useState("");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !agree || loading) return;
 
     setLoading(true);
+    setOk(false);
+    setError("");
+
     try {
-      await fetch("/api/subscribe", {
+      const response = await fetch("/api/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, telegram }),
-      }).catch(() => {});
-      // Always show success to the user (per our behavior)
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || `Subscribe failed (${response.status})`);
+      }
+
+      // Only clear the form and show success after the server confirms
+      // that Google Apps Script returned a successful response.
       setOk(true);
       setEmail("");
       setTelegram("");
+    } catch (err) {
+      console.error("Subscribe failed:", err);
+      setError("Sorry — we couldn't save your details. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -107,7 +122,7 @@ export default function EmailCapture() {
           <a href="/privacy" className="underline hover:text-yellow-300">privacy notice</a>.
         </label>
 
-        {/* Button + inline success text */}
+        {/* Button + inline status text */}
         <div className="flex items-center gap-3">
           <button
             type="submit"
@@ -127,6 +142,12 @@ export default function EmailCapture() {
           {ok && (
             <span className="text-[13px] text-emerald-300">
               Success — welcome aboard!
+            </span>
+          )}
+
+          {error && (
+            <span className="text-[12px] text-red-300">
+              {error}
             </span>
           )}
         </div>
