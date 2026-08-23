@@ -139,6 +139,13 @@ export function getMembershipActionEligibility(input: {
   };
 }
 
+export function canConfirmChangeExpiry(
+  requiresPastExpiryAcknowledgement: boolean,
+  pastExpiryAcknowledged: boolean
+): boolean {
+  return !requiresPastExpiryAcknowledgement || pastExpiryAcknowledged;
+}
+
 export function buildChangeExpiryPreview(input: {
   currentExpiry: string;
   newExpiry: string;

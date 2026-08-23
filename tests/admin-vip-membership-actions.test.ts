@@ -13,6 +13,7 @@ import {
   normalizeOptionalText,
   assertIsoDate,
   membershipEventTitle,
+  canConfirmChangeExpiry,
 } from "../app/admin/vip/_lib/membership-actions.ts";
 
 test("adds days to an ISO date", () => {
@@ -151,4 +152,10 @@ test("formats membership history event titles", () => {
   assert.equal(membershipEventTitle("MEMBERSHIP_REACTIVATED"), "Membership reactivated");
   assert.equal(membershipEventTitle("MEMBERSHIP_NOTE_UPDATED"), "Membership note updated");
   assert.equal(membershipEventTitle("SOME_NEW_EVENT"), "Some new event");
+});
+
+test("past-expiry confirmation stays disabled until acknowledgement", () => {
+  assert.equal(canConfirmChangeExpiry(true, false), false);
+  assert.equal(canConfirmChangeExpiry(true, true), true);
+  assert.equal(canConfirmChangeExpiry(false, false), true);
 });

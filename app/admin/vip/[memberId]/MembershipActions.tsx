@@ -6,6 +6,7 @@ import {
   buildAddTimePreview,
   buildChangeExpiryPreview,
   buildRenewPreview,
+  canConfirmChangeExpiry,
   getMembershipActionEligibility,
   normalizeCurrency,
   normalizeOptionalText,
@@ -128,6 +129,7 @@ export default function MembershipActions(props: Props) {
 
   const [changeExpiry, setChangeExpiry] = useState(props.currentExpiresOn ?? "");
   const [changeReason, setChangeReason] = useState("");
+  const [pastExpiryAcknowledged, setPastExpiryAcknowledged] = useState(false);
 
   const [addValue, setAddValue] = useState(1);
   const [addUnit, setAddUnit] = useState<DurationUnit>("months");
@@ -147,12 +149,14 @@ export default function MembershipActions(props: Props) {
     setActionKind(next);
     setReviewing(false);
     setFormError(null);
+    setPastExpiryAcknowledged(false);
   };
 
   const closeAction = () => {
     setActionKind(null);
     setReviewing(false);
     setFormError(null);
+    setPastExpiryAcknowledged(false);
   };
 
   const reviewChangeExpiry = () => {
@@ -166,6 +170,7 @@ export default function MembershipActions(props: Props) {
       });
       if (preview.oldExpiry === preview.newExpiry) throw new Error("Choose a different expiry date.");
       setFormError(null);
+      setPastExpiryAcknowledged(false);
       setReviewing(true);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Check the form and try again.");
@@ -347,7 +352,15 @@ export default function MembershipActions(props: Props) {
                 </div>
                 {changePreview.requiresPastExpiryAcknowledgement ? (
                   <label className="flex gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-100">
-                    <input type="checkbox" name="pastAcknowledged" value="true" required className="mt-0.5" />
+                    <input
+                      type="checkbox"
+                      name="pastAcknowledged"
+                      value="true"
+                      required
+                      checked={pastExpiryAcknowledged}
+                      onChange={(event) => setPastExpiryAcknowledged(event.target.checked)}
+                      className="mt-0.5"
+                    />
                     <span><strong>This change will make the member expired immediately.</strong><br />I understand and want to continue.</span>
                   </label>
                 ) : (
@@ -359,8 +372,20 @@ export default function MembershipActions(props: Props) {
                 <input type="hidden" name="newExpiry" value={changePreview.newExpiry} />
                 <input type="hidden" name="reason" value={validateReason(changeReason)} />
                 <div className="flex gap-2">
-                  <button type="submit" className="rounded-lg bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-200">Confirm Change Expiry</button>
-                  <button type="button" onClick={() => setReviewing(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">Back</button>
+                  <button
+                    type="submit"
+                    disabled={!canConfirmChangeExpiry(changePreview.requiresPastExpiryAcknowledgement, pastExpiryAcknowledged)}
+                    className="rounded-lg bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 disabled:hover:bg-slate-700"
+                  >
+                    Confirm Change Expiry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setReviewing(false); setPastExpiryAcknowledged(false); }}
+                    className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300"
+                  >
+                    Back
+                  </button>
                 </div>
               </form>
             ) : null
