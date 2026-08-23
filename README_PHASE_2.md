@@ -91,3 +91,4 @@ SHA-256-derived, httpOnly session cookie.
 
 Before Phase 2 write controls are enabled, migrate admin authentication to the
 planned Supabase Auth/admin-user model and add explicit audit-backed authorization.
+Preview redeploy trigger — 23/08/2026
