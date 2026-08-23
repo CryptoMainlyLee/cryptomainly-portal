@@ -78,6 +78,13 @@ begin
   if v_result.new_expiry <> v_today-1 then raise exception 'Acknowledged past expiry failed'; end if;
   update public.membership_periods set expires_on=v_active_expiry where id=v_active_period;
 
+  -- A former member's selected fixed-expiry period can be corrected without reactivation.
+  select * into v_result from public.admin_change_membership_expiry(
+    v_former_member,v_former_period,v_former_expiry,v_today+30,'Administrative expiry correction',false,'phase2-test');
+  if v_result.new_expiry <> v_today+30 then raise exception 'Former expiry correction failed'; end if;
+  if not exists(select 1 from public.membership_events where id=v_result.event_id and event_type='EXPIRY_CHANGED') then raise exception 'Former expiry correction event missing'; end if;
+  update public.membership_periods set expires_on=v_former_expiry where id=v_former_period;
+
   -- Add Time extends from current expiry and creates no payment.
   select count(*) into v_count from public.payments where member_id=v_active_member;
   select * into v_result from public.admin_add_membership_time(v_active_member,v_active_period,v_active_expiry,1,'months','Goodwill extension','phase2-test');

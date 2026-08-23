@@ -110,9 +110,12 @@ export function getMembershipActionEligibility(input: {
   expiresOn: string | null;
 }): ActionEligibility {
   if (input.status === "FORMER") {
+    const canCorrectFixedExpiry = input.expiryMode === "fixed" && Boolean(input.expiresOn);
     return {
-      changeExpiry: { enabled: false, reason: "Former members are changed through Renew / Reactivate." },
-      addTime: { enabled: false, reason: "Former members are changed through Renew / Reactivate." },
+      changeExpiry: canCorrectFixedExpiry
+        ? { enabled: true }
+        : { enabled: false, reason: "This former membership has no fixed expiry date to correct." },
+      addTime: { enabled: false, reason: "Use Renew / Reactivate for genuine returns." },
       renew: { enabled: true, mode: "reactivation" },
     };
   }

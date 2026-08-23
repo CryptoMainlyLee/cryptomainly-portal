@@ -85,14 +85,14 @@ test("eligibility disables fixed-date actions for lifetime/no-expiry", () => {
   assert.equal(result.renew.enabled, false);
 });
 
-test("eligibility makes former members reactivation-only", () => {
+test("eligibility allows audited expiry correction for former fixed-expiry members", () => {
   const result = getMembershipActionEligibility({
     status: "FORMER",
     entitlementType: "paid",
     expiryMode: "fixed",
     expiresOn: "2026-06-01",
   });
-  assert.equal(result.changeExpiry.enabled, false);
+  assert.equal(result.changeExpiry.enabled, true);
   assert.equal(result.addTime.enabled, false);
   assert.deepEqual(result.renew, { enabled: true, mode: "reactivation" });
 });
