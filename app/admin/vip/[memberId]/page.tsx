@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { updateMembershipNoteAction } from "../actions";
 import { hasAdminSession } from "../_lib/auth";
-import { getMember, getMemberHistory } from "../_lib/data";
+import {
+  getMember,
+  getMemberHistory,
+  getMemberPeriods,
+  type MemberHistory,
+} from "../_lib/data";
 
 type Props = {
   params: { memberId: string };
+  searchParams?: { note?: string };
 };
 
 export const dynamic = "force-dynamic";
@@ -18,7 +25,8 @@ function formatDate(value: string | null) {
   }).format(new Date(`${value}T12:00:00Z`));
 }
 
-function formatDateTime(value: string) {
+function formatDateTime(value: string | null) {
+  if (!value) return "—";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -26,6 +34,15 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function titleCase(value: string | null) {
+  if (!value) return "—";
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function Detail({
@@ -43,13 +60,36 @@ function Detail({
   );
 }
 
-export default async function MemberDetail({ params }: Props) {
+function auditNoteChange(event: MemberHistory) {
+  if (event.event_type !== "MEMBERSHIP_NOTE_UPDATED") return null;
+
+  const oldNote =
+    typeof event.metadata?.old_note === "string" ? event.metadata.old_note : null;
+  const newNote =
+    typeof event.metadata?.new_note === "string" ? event.metadata.new_note : null;
+
+  return (
+    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+      <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+        <p className="uppercase tracking-wider text-slate-600">Previous note</p>
+        <p className="mt-1 whitespace-pre-wrap text-slate-400">{oldNote || "Empty"}</p>
+      </div>
+      <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+        <p className="uppercase tracking-wider text-slate-600">New note</p>
+        <p className="mt-1 whitespace-pre-wrap text-slate-300">{newNote || "Empty"}</p>
+      </div>
+    </div>
+  );
+}
+
+export default async function MemberDetail({ params, searchParams }: Props) {
   if (!(await hasAdminSession())) {
     redirect("/admin/vip/login");
   }
 
-  const [member, history] = await Promise.all([
+  const [member, periods, history] = await Promise.all([
     getMember(params.memberId),
+    getMemberPeriods(params.memberId),
     getMemberHistory(params.memberId),
   ]);
 
@@ -82,9 +122,21 @@ export default async function MemberDetail({ params }: Props) {
           </div>
         </header>
 
+        {searchParams?.note === "saved" ? (
+          <div className="mt-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+            Membership note saved. The change was also added to Activity &amp; Audit History.
+          </div>
+        ) : null}
+
+        {searchParams?.note === "too-long" ? (
+          <div className="mt-5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            Membership notes can contain a maximum of 4,000 characters.
+          </div>
+        ) : null}
+
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-            <h2 className="font-semibold text-white">Membership</h2>
+            <h2 className="font-semibold text-white">Current membership</h2>
             <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
               <Detail label="Type" value={member.entitlement_type} />
               <Detail label="Status" value={member.status} />
@@ -108,7 +160,7 @@ export default async function MemberDetail({ params }: Props) {
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-            <h2 className="font-semibold text-white">Identity & contact</h2>
+            <h2 className="font-semibold text-white">Identity &amp; contact</h2>
             <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
               <Detail label="Telegram" value={member.telegram_username ?? member.telegram_raw} />
               <Detail
@@ -131,7 +183,7 @@ export default async function MemberDetail({ params }: Props) {
 
         {member.admin_notes ? (
           <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-            <h2 className="font-semibold text-white">Legacy/admin notes</h2>
+            <h2 className="font-semibold text-white">Legacy/member notes</h2>
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">
               {member.admin_notes}
             </p>
@@ -139,8 +191,115 @@ export default async function MemberDetail({ params }: Props) {
         ) : null}
 
         <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-white">Membership periods</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Dates and entitlement history are locked. The admin note on each period is editable.
+              </p>
+            </div>
+            <span className="text-xs text-slate-500">
+              {periods.length} period{periods.length === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {periods.map((period) => (
+              <div
+                key={period.membership_period_id}
+                className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-slate-100">
+                        {formatDate(period.starts_on)} → {period.expiry_mode === "manual_no_expiry" || period.expiry_mode === "lifetime" ? "No expiry" : formatDate(period.expires_on)}
+                      </p>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                          period.period_status === "CURRENT"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                            : "border-slate-700 bg-slate-800/70 text-slate-400"
+                        }`}
+                      >
+                        {period.period_status}
+                      </span>
+                      {period.migration_review ? (
+                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
+                          Legacy review
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {titleCase(period.entitlement_type)} • {period.plan_name ?? "VIP membership"} • {titleCase(period.source)}
+                    </p>
+                  </div>
+
+                  {period.removal_protected ? (
+                    <span className="text-xs text-amber-300">Removal protected</span>
+                  ) : null}
+                </div>
+
+                {period.legacy_notes ? (
+                  <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <p className="text-[11px] uppercase tracking-wider text-slate-600">
+                      Legacy source note — read only
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-400">
+                      {period.legacy_notes}
+                    </p>
+                  </div>
+                ) : null}
+
+                <form action={updateMembershipNoteAction} className="mt-4">
+                  <input type="hidden" name="memberId" value={member.member_id} />
+                  <input
+                    type="hidden"
+                    name="periodId"
+                    value={period.membership_period_id}
+                  />
+                  <label
+                    htmlFor={`note-${period.membership_period_id}`}
+                    className="text-[11px] font-medium uppercase tracking-wider text-slate-500"
+                  >
+                    Editable membership note
+                  </label>
+                  <textarea
+                    id={`note-${period.membership_period_id}`}
+                    name="note"
+                    rows={3}
+                    maxLength={4000}
+                    defaultValue={period.admin_note ?? ""}
+                    placeholder="Add useful context for this membership period…"
+                    className="mt-2 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none transition focus:border-amber-400"
+                  />
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-slate-600">
+                      {period.note_updated_at
+                        ? `Last updated ${formatDateTime(period.note_updated_at)} by ${period.note_updated_by ?? "vip-admin"}`
+                        : "No editable note saved yet."}
+                    </p>
+                    <button
+                      type="submit"
+                      className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-300 transition hover:bg-amber-400/20"
+                    >
+                      Save note
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-white">Membership history</h2>
+            <div>
+              <h2 className="font-semibold text-white">Activity &amp; audit history</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Permanent record of migrations, note changes and future membership actions.
+              </p>
+            </div>
             <span className="text-xs text-slate-500">
               {history.length} event{history.length === 1 ? "" : "s"}
             </span>
@@ -164,10 +323,10 @@ export default async function MemberDetail({ params }: Props) {
                   ) : null}
                   {event.old_expiry || event.new_expiry ? (
                     <p className="mt-2 text-xs text-slate-500">
-                      Expiry: {formatDate(event.old_expiry)} →{" "}
-                      {formatDate(event.new_expiry)}
+                      Expiry: {formatDate(event.old_expiry)} → {formatDate(event.new_expiry)}
                     </p>
                   ) : null}
+                  {auditNoteChange(event)}
                 </div>
               ))
             ) : (
@@ -177,9 +336,8 @@ export default async function MemberDetail({ params }: Props) {
         </section>
 
         <div className="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-100/80">
-          Phase 2A is deliberately read-only. Editing expiry, renewing membership,
-          adding time and Telegram actions will be introduced only after this live
-          view has been verified.
+          Phase 2B permits editing membership-period notes only. Expiry dates,
+          entitlement type, renewals, payments and Telegram actions remain read-only.
         </div>
       </div>
     </main>

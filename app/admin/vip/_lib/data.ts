@@ -43,6 +43,32 @@ export type MemberHistory = {
   metadata: Record<string, unknown>;
 };
 
+export type MemberPeriod = {
+  membership_period_id: string;
+  member_id: string;
+  entitlement_type: "paid" | "complimentary" | "trial" | "lifetime" | "admin";
+  plan_name: string | null;
+  source: string;
+  starts_on: string | null;
+  expires_on: string | null;
+  expiry_mode: "fixed" | "lifetime" | "manual_no_expiry";
+  removal_protected: boolean;
+  protection_reason: string | null;
+  ended_early_on: string | null;
+  legacy_notes: string | null;
+  admin_note: string | null;
+  note_updated_at: string | null;
+  note_updated_by: string | null;
+  migration_review: boolean;
+  created_at: string;
+  period_status: "CURRENT" | "HISTORICAL" | "FUTURE";
+};
+
+type SupabaseRequestOptions = {
+  method?: "GET" | "POST";
+  body?: unknown;
+};
+
 function config() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -56,23 +82,34 @@ function config() {
   return { url: url.replace(/\/$/, ""), key };
 }
 
-async function supabaseRest<T>(path: string): Promise<T> {
+async function supabaseRest<T>(
+  path: string,
+  options: SupabaseRequestOptions = {}
+): Promise<T> {
   const { url, key } = config();
+  const method = options.method ?? "GET";
   const response = await fetch(`${url}/rest/v1/${path}`, {
+    method,
     headers: {
       apikey: key,
       Authorization: `Bearer ${key}`,
       Accept: "application/json",
+      ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
     },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
     cache: "no-store",
   });
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`Supabase dashboard read failed (${response.status}): ${detail}`);
+    const operation = method === "GET" ? "read" : "write";
+    throw new Error(
+      `Supabase dashboard ${operation} failed (${response.status}): ${detail}`
+    );
   }
 
-  return response.json() as Promise<T>;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 export async function getMembers() {
@@ -88,10 +125,42 @@ export async function getMember(memberId: string) {
   return rows[0] ?? null;
 }
 
+export async function getMemberPeriods(memberId: string) {
+  return supabaseRest<MemberPeriod[]>(
+    `admin_membership_periods?select=*&member_id=eq.${encodeURIComponent(
+      memberId
+    )}&order=starts_on.desc.nullslast,created_at.desc`
+  );
+}
+
 export async function getMemberHistory(memberId: string) {
   return supabaseRest<MemberHistory[]>(
     `admin_member_history?select=*&member_id=eq.${encodeURIComponent(
       memberId
     )}&order=occurred_at.desc`
   );
+}
+
+export async function updateMembershipPeriodNote(input: {
+  memberId: string;
+  periodId: string;
+  note: string;
+  actorId?: string;
+}) {
+  return supabaseRest<
+    Array<{
+      member_id: string;
+      membership_period_id: string;
+      admin_note: string | null;
+      note_updated_at: string | null;
+    }>
+  >("rpc/update_membership_period_note", {
+    method: "POST",
+    body: {
+      p_member_id: input.memberId,
+      p_period_id: input.periodId,
+      p_note: input.note,
+      p_actor_id: input.actorId ?? "vip-admin",
+    },
+  });
 }
