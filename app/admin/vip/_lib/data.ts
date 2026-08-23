@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { DurationUnit } from "./membership-actions";
+
 export type MemberOverview = {
   member_id: string;
   legacy_member_code: string | null;
@@ -64,6 +66,32 @@ export type MemberPeriod = {
   period_status: "CURRENT" | "HISTORICAL" | "FUTURE";
 };
 
+export type MembershipActionResult = {
+  member_id: string;
+  membership_period_id: string;
+  old_expiry: string | null;
+  new_expiry: string;
+  payment_id: string | null;
+  event_id: string;
+};
+
+export type MembershipActionErrorCode =
+  | "STALE_PREVIEW"
+  | "PAST_EXPIRY_ACK_REQUIRED"
+  | "ACTION_NOT_ALLOWED"
+  | "INVALID_INPUT"
+  | "OVERLAPPING_ENTITLEMENT";
+
+export class MembershipActionError extends Error {
+  code: MembershipActionErrorCode;
+
+  constructor(code: MembershipActionErrorCode) {
+    super(code);
+    this.name = "MembershipActionError";
+    this.code = code;
+  }
+}
+
 type SupabaseRequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
@@ -80,6 +108,18 @@ function config() {
   }
 
   return { url: url.replace(/\/$/, ""), key };
+}
+
+function actionErrorFromDetail(detail: string): MembershipActionError | null {
+  const codes: MembershipActionErrorCode[] = [
+    "STALE_PREVIEW",
+    "PAST_EXPIRY_ACK_REQUIRED",
+    "ACTION_NOT_ALLOWED",
+    "INVALID_INPUT",
+    "OVERLAPPING_ENTITLEMENT",
+  ];
+  const code = codes.find((candidate) => detail.includes(candidate));
+  return code ? new MembershipActionError(code) : null;
 }
 
 async function supabaseRest<T>(
@@ -102,6 +142,9 @@ async function supabaseRest<T>(
 
   if (!response.ok) {
     const detail = await response.text();
+    const safeActionError = actionErrorFromDetail(detail);
+    if (safeActionError) throw safeActionError;
+
     const operation = method === "GET" ? "read" : "write";
     throw new Error(
       `Supabase dashboard ${operation} failed (${response.status}): ${detail}`
@@ -160,6 +203,120 @@ export async function updateMembershipPeriodNote(input: {
       p_member_id: input.memberId,
       p_period_id: input.periodId,
       p_note: input.note,
+      p_actor_id: input.actorId ?? "vip-admin",
+    },
+  });
+}
+
+export async function changeMembershipExpiry(input: {
+  memberId: string;
+  periodId: string;
+  expectedExpiry: string;
+  newExpiry: string;
+  reason: string;
+  pastAcknowledged: boolean;
+  actorId?: string;
+}) {
+  return supabaseRest<MembershipActionResult[]>("rpc/admin_change_membership_expiry", {
+    method: "POST",
+    body: {
+      p_member_id: input.memberId,
+      p_period_id: input.periodId,
+      p_expected_expiry: input.expectedExpiry,
+      p_new_expiry: input.newExpiry,
+      p_reason: input.reason,
+      p_past_acknowledged: input.pastAcknowledged,
+      p_actor_id: input.actorId ?? "vip-admin",
+    },
+  });
+}
+
+export async function addMembershipTime(input: {
+  memberId: string;
+  periodId: string;
+  expectedExpiry: string;
+  value: number;
+  unit: DurationUnit;
+  reason: string;
+  actorId?: string;
+}) {
+  return supabaseRest<MembershipActionResult[]>("rpc/admin_add_membership_time", {
+    method: "POST",
+    body: {
+      p_member_id: input.memberId,
+      p_period_id: input.periodId,
+      p_expected_expiry: input.expectedExpiry,
+      p_duration_value: input.value,
+      p_duration_unit: input.unit,
+      p_reason: input.reason,
+      p_actor_id: input.actorId ?? "vip-admin",
+    },
+  });
+}
+
+export async function renewActiveMembership(input: {
+  memberId: string;
+  periodId: string;
+  expectedExpiry: string;
+  value: number;
+  unit: DurationUnit;
+  amount: number;
+  currency: string;
+  paymentDate: string;
+  txHash: string | null;
+  paymentNote: string | null;
+  reason: string;
+  actorId?: string;
+}) {
+  return supabaseRest<MembershipActionResult[]>("rpc/admin_renew_active_membership", {
+    method: "POST",
+    body: {
+      p_member_id: input.memberId,
+      p_period_id: input.periodId,
+      p_expected_expiry: input.expectedExpiry,
+      p_duration_value: input.value,
+      p_duration_unit: input.unit,
+      p_amount: input.amount,
+      p_currency: input.currency,
+      p_payment_date: input.paymentDate,
+      p_tx_hash: input.txHash,
+      p_payment_note: input.paymentNote,
+      p_reason: input.reason,
+      p_actor_id: input.actorId ?? "vip-admin",
+    },
+  });
+}
+
+export async function reactivateMembership(input: {
+  memberId: string;
+  expectedLatestPeriodId: string | null;
+  expectedLatestExpiry: string | null;
+  reactivationStart: string;
+  value: number;
+  unit: DurationUnit;
+  amount: number;
+  currency: string;
+  paymentDate: string;
+  txHash: string | null;
+  paymentNote: string | null;
+  reason: string;
+  actorId?: string;
+}) {
+  return supabaseRest<MembershipActionResult[]>("rpc/admin_reactivate_membership", {
+    method: "POST",
+    body: {
+      p_member_id: input.memberId,
+      p_expected_latest_period_id: input.expectedLatestPeriodId,
+      p_expected_latest_expiry: input.expectedLatestExpiry,
+      p_reactivation_start: input.reactivationStart,
+      p_duration_value: input.value,
+      p_duration_unit: input.unit,
+      p_amount: input.amount,
+      p_currency: input.currency,
+      p_payment_date: input.paymentDate,
+      p_tx_hash: input.txHash,
+      p_payment_note: input.paymentNote,
+      p_reason: input.reason,
       p_actor_id: input.actorId ?? "vip-admin",
     },
   });

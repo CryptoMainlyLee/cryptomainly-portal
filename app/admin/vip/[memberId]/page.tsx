@@ -8,10 +8,16 @@ import {
   getMemberPeriods,
   type MemberHistory,
 } from "../_lib/data";
+import { membershipEventTitle } from "../_lib/membership-actions";
+import MembershipActions from "./MembershipActions";
 
 type Props = {
   params: { memberId: string };
-  searchParams?: { note?: string };
+  searchParams?: {
+    note?: string;
+    action?: string;
+    actionError?: string;
+  };
 };
 
 export const dynamic = "force-dynamic";
@@ -34,6 +40,18 @@ function formatDateTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function londonToday() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 function titleCase(value: string | null) {
@@ -82,6 +100,54 @@ function auditNoteChange(event: MemberHistory) {
   );
 }
 
+function metadataText(event: MemberHistory, key: string) {
+  const value = event.metadata?.[key];
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return null;
+}
+
+function historySummary(event: MemberHistory) {
+  const amount = metadataText(event, "amount");
+  const currency = metadataText(event, "currency");
+  const reactivationStart = metadataText(event, "reactivation_start");
+
+  switch (event.event_type) {
+    case "EXPIRY_CHANGED":
+      return `${formatDate(event.old_expiry)} → ${formatDate(event.new_expiry)}`;
+    case "MEMBERSHIP_TIME_ADDED":
+      return `+${event.adjustment_value ?? "—"} ${event.adjustment_unit ?? ""} · ${formatDate(
+        event.old_expiry
+      )} → ${formatDate(event.new_expiry)}`;
+    case "MEMBERSHIP_RENEWED":
+      return `${amount && currency ? `${amount} ${currency} · ` : ""}${formatDate(
+        event.old_expiry
+      )} → ${formatDate(event.new_expiry)}`;
+    case "MEMBERSHIP_REACTIVATED":
+      return `${amount && currency ? `${amount} ${currency} · ` : ""}${formatDate(
+        reactivationStart
+      )} → ${formatDate(event.new_expiry)}`;
+    default:
+      return event.old_expiry || event.new_expiry
+        ? `${formatDate(event.old_expiry)} → ${formatDate(event.new_expiry)}`
+        : null;
+  }
+}
+
+const ACTION_SUCCESS: Record<string, string> = {
+  "expiry-changed": "Expiry changed and permanent audit records were created.",
+  "time-added": "Membership time added and permanent audit records were created.",
+  renewed: "Paid renewal recorded. Membership, payment and audit records were saved together.",
+  reactivated: "Member reactivated with a new paid membership period and permanent audit records.",
+};
+
+const ACTION_ERROR: Record<string, string> = {
+  stale: "Membership changed since preview — please review again.",
+  "past-ack": "Past expiry dates require the additional confirmation acknowledgement.",
+  "not-allowed": "That action is no longer allowed for the member's current entitlement state. Refresh and review the record.",
+  overlap: "The proposed reactivation would overlap an existing membership period. Review the dates before trying again.",
+  invalid: "The membership action was not saved. Check the dates, duration, amount and required reason.",
+};
+
 export default async function MemberDetail({ params, searchParams }: Props) {
   if (!(await hasAdminSession())) {
     redirect("/admin/vip/login");
@@ -94,6 +160,15 @@ export default async function MemberDetail({ params, searchParams }: Props) {
   ]);
 
   if (!member) notFound();
+
+  const currentPeriod = periods.find(
+    (period) => period.membership_period_id === member.membership_period_id
+  );
+  const latestHistoricalPeriod =
+    member.status === "FORMER"
+      ? currentPeriod ?? periods.find((period) => period.period_status === "HISTORICAL") ?? null
+      : periods.find((period) => period.period_status === "HISTORICAL") ?? null;
+  const todayLondon = londonToday();
 
   return (
     <main className="min-h-screen bg-[#07111f] text-slate-100">
@@ -131,6 +206,18 @@ export default async function MemberDetail({ params, searchParams }: Props) {
         {searchParams?.note === "too-long" ? (
           <div className="mt-5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
             Membership notes can contain a maximum of 4,000 characters.
+          </div>
+        ) : null}
+
+        {searchParams?.action && ACTION_SUCCESS[searchParams.action] ? (
+          <div className="mt-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+            {ACTION_SUCCESS[searchParams.action]}
+          </div>
+        ) : null}
+
+        {searchParams?.actionError && ACTION_ERROR[searchParams.actionError] ? (
+          <div className="mt-5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            {ACTION_ERROR[searchParams.actionError]}
           </div>
         ) : null}
 
@@ -181,6 +268,19 @@ export default async function MemberDetail({ params, searchParams }: Props) {
           </div>
         </section>
 
+        <MembershipActions
+          memberId={member.member_id}
+          status={member.status}
+          entitlementType={member.entitlement_type}
+          currentPeriodId={member.membership_period_id}
+          currentStartsOn={member.starts_on}
+          currentExpiresOn={member.expires_on}
+          expiryMode={member.expiry_mode}
+          latestHistoricalPeriodId={latestHistoricalPeriod?.membership_period_id ?? null}
+          latestHistoricalExpiry={latestHistoricalPeriod?.expires_on ?? null}
+          todayLondon={todayLondon}
+        />
+
         {member.admin_notes ? (
           <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
             <h2 className="font-semibold text-white">Legacy/member notes</h2>
@@ -195,7 +295,7 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             <div>
               <h2 className="font-semibold text-white">Membership periods</h2>
               <p className="mt-1 text-xs text-slate-500">
-                Dates and entitlement history are locked. The admin note on each period is editable.
+                Structured entitlement dates are changed only through the audited Membership Actions panel. Period notes remain editable.
               </p>
             </div>
             <span className="text-xs text-slate-500">
@@ -297,7 +397,7 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             <div>
               <h2 className="font-semibold text-white">Activity &amp; audit history</h2>
               <p className="mt-1 text-xs text-slate-500">
-                Permanent record of migrations, note changes and future membership actions.
+                Permanent record of migrations, original relationship dates, note changes and membership actions.
               </p>
             </div>
             <span className="text-xs text-slate-500">
@@ -307,28 +407,44 @@ export default async function MemberDetail({ params, searchParams }: Props) {
 
           <div className="mt-4 space-y-3">
             {history.length ? (
-              history.map((event) => (
-                <div
-                  key={event.event_id}
-                  className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
-                >
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="font-medium text-slate-200">{event.event_type}</p>
-                    <p className="text-xs text-slate-500">
-                      {formatDateTime(event.occurred_at)}
-                    </p>
+              history.map((event) => {
+                const summary = historySummary(event);
+                const relationshipStart = metadataText(event, "original_relationship_start_on");
+                const sourceRow = metadataText(event, "source_row");
+                return (
+                  <div
+                    key={event.event_id}
+                    className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
+                  >
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="font-medium text-slate-200">
+                        {membershipEventTitle(event.event_type)}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {event.event_type === "LEGACY_RELATIONSHIP_STARTED" && relationshipStart
+                          ? formatDate(relationshipStart)
+                          : formatDateTime(event.occurred_at)}
+                      </p>
+                    </div>
+
+                    {summary ? (
+                      <p className="mt-2 text-sm font-medium text-slate-300">{summary}</p>
+                    ) : null}
+
+                    {event.reason ? (
+                      <p className="mt-2 text-sm text-slate-400">{event.reason}</p>
+                    ) : null}
+
+                    {event.event_type === "LEGACY_RELATIONSHIP_STARTED" ? (
+                      <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs leading-5 text-slate-500">
+                        Legacy source: Copy of NFT, column B{sourceRow ? `, row ${sourceRow}` : ""}. Historical gaps/lapses are not represented by this date.
+                      </div>
+                    ) : null}
+
+                    {auditNoteChange(event)}
                   </div>
-                  {event.reason ? (
-                    <p className="mt-2 text-sm text-slate-400">{event.reason}</p>
-                  ) : null}
-                  {event.old_expiry || event.new_expiry ? (
-                    <p className="mt-2 text-xs text-slate-500">
-                      Expiry: {formatDate(event.old_expiry)} → {formatDate(event.new_expiry)}
-                    </p>
-                  ) : null}
-                  {auditNoteChange(event)}
-                </div>
-              ))
+                );
+              })
             ) : (
               <p className="text-sm text-slate-500">No event history recorded.</p>
             )}
@@ -336,8 +452,7 @@ export default async function MemberDetail({ params, searchParams }: Props) {
         </section>
 
         <div className="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-100/80">
-          Phase 2B permits editing membership-period notes only. Expiry dates,
-          entitlement type, renewals, payments and Telegram actions remain read-only.
+          Phase 2 Preview enables audited membership actions and editable period notes. Telegram removal, reminders, campaign sending and payment auto-activation remain disabled.
         </div>
       </div>
     </main>
