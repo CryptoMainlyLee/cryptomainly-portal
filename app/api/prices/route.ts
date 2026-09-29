@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+function coinGeckoHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "User-Agent": "CryptoMainly/1.0" };
+  const apiKey = process.env.COINGECKO_API_KEY?.trim();
+  if (apiKey) headers["x-cg-demo-api-key"] = apiKey;
+  return headers;
+}
+
 type PriceRow = {
   id: string;          // coingecko id (e.g., "bitcoin")
   symbol: string;      // short ticker (e.g., "BTC")
@@ -54,7 +61,7 @@ async function fetchWithRetry(url: string, tries = 3) {
     try {
       const r = await timeout(
         TIMEOUT_MS,
-        fetch(url, { cache: "no-store", headers: { "User-Agent": "CryptoMainly/1.0" } })
+        fetch(url, { cache: "no-store", headers: coinGeckoHeaders() })
       );
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       return await r.json();

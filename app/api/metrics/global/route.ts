@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+function coinGeckoHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "User-Agent": "CryptoMainly/1.0" };
+  const apiKey = process.env.COINGECKO_API_KEY?.trim();
+  if (apiKey) headers["x-cg-demo-api-key"] = apiKey;
+  return headers;
+}
+
 type GlobalPayload = {
   ok: boolean;
   stale: boolean;           // true if served from cache due to upstream issues
@@ -36,7 +43,7 @@ async function fetchWithRetry(url: string, tries = 3): Promise<any> {
   let lastErr: any;
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await timeout(TIMEOUT_MS, fetch(url, { cache: "no-store", headers: { "User-Agent": "CryptoMainly/1.0" } }));
+      const res = await timeout(TIMEOUT_MS, fetch(url, { cache: "no-store", headers: coinGeckoHeaders() }));
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       return await res.json();
     } catch (e) {
