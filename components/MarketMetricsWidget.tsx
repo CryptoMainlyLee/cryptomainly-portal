@@ -340,7 +340,7 @@ export default function MarketMetricsWidget() {
         <li className="flex items-center justify-between">
           <span className="flex items-center gap-1.5" title="Open-interest-weighted 8h-equivalent funding across Binance, Bybit, Bitget and OKX">
             <span className="text-[14px]">💸</span>
-            <span className="text-white">Market Funding</span>
+            <span className="text-white">OI-Wtd Funding</span>
           </span>
           <span className="text-[12px]">
             {(() => {

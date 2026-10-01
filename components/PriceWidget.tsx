@@ -267,7 +267,7 @@ export default function PriceWidget() {
           href="https://www.coingecko.com/"
           target="_blank"
           rel="noreferrer"
-          className="font-semibold text-[#00ff7f] hover:underline"
+          className="font-semibold text-[#60A5FA] hover:underline"
         >
           CoinGecko
         </a>
