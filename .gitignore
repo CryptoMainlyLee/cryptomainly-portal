@@ -26,3 +26,6 @@ data/
 # Public builds (allow these two SEO files)
 !/public/robots.txt
 !/public/sitemap.xml
+
+# Local git worktrees
+.worktrees/
