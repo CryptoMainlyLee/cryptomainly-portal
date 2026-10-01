@@ -338,12 +338,9 @@ export default function MarketMetricsWidget() {
 
         {/* Cross-exchange market funding */}
         <li className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5" title="Open-interest-weighted funding across Binance, Bybit, Bitget and OKX, normalized to an 8-hour equivalent">
+          <span className="flex items-center gap-1.5" title="Open-interest-weighted 8h-equivalent funding across Binance, Bybit, Bitget and OKX">
             <span className="text-[14px]">💸</span>
-            <span className="flex flex-col leading-none">
-              <span className="text-white">Market Funding</span>
-              <span className="mt-0.5 text-[9px] text-white/40">OI-wtd 8h</span>
-            </span>
+            <span className="text-white">Market Funding</span>
           </span>
           <span className="text-[12px]">
             {(() => {
@@ -422,16 +419,16 @@ export default function MarketMetricsWidget() {
       {/* Footer credits (as before) */}
       <div className="mt-3 border-t border-white/10 pt-2 text-center text-[11px] leading-snug">
         <span className="text-white/60">Market references: </span>
-        <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.coinglass.com/">
+        <a className="text-[#60A5FA] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.coinglass.com/">
           Coinglass
         </a>
         <span className="text-white/40"> / </span>
-        <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://alternative.me/crypto/fear-and-greed-index/">
+        <a className="text-[#60A5FA] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://alternative.me/crypto/fear-and-greed-index/">
           Alternative.me
         </a>
         <div className="mt-1 text-[10px] text-white/45">
           OI &amp; L/S via{" "}
-          <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.bitget.com/referral/register?clacCode=WLRHARHW&from=%2Fevents%2Freferral-all-program&source=events&utmSource=PremierInviter&shareid=telegram">
+          <a className="text-[#60A5FA] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.bitget.com/referral/register?clacCode=WLRHARHW&from=%2Fevents%2Freferral-all-program&source=events&utmSource=PremierInviter&shareid=telegram">
             Bitget
           </a>
           <span className="text-white/30"> • </span>

@@ -5,5 +5,4 @@ const res = await fetch(base, { cache: "no-store" });
 assert.equal(res.status, 200, `expected homepage 200, got ${res.status}`);
 const html = await res.text();
 assert.match(html, /Market Funding/);
-assert.match(html, /OI-wtd 8h/);
 console.log("PASS market funding widget label present");
