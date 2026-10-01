@@ -297,7 +297,7 @@ export default function Page() {
         />
 
         {/* Desktop floating widgets */}
-        <div className="fixed right-6 bottom-6 z-30 hidden md:block w-[340px] space-y-3">
+        <div className="fixed right-6 top-6 z-30 hidden md:block w-[340px] max-h-[calc(100vh-3rem)] overflow-y-auto space-y-3">
           <PriceWidget />
           {/* Email capture sits under prices on desktop (same column/width) */}
           <EmailCapture />
