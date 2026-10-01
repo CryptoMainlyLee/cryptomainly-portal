@@ -128,7 +128,7 @@ function ChartPreviewWidget() {
       )}
 
       {/* Preview */}
-      <div className="overflow-hidden rounded-xl ring-1 ring-white/10 bg-black/30">
+      <div className="overflow-hidden rounded-xl ring-1 ring-white/10 bg-black/30 md:min-h-[120px]">
         {id ? (
           <Link href={tvUrl} target="_blank" rel="noopener noreferrer nofollow">
             <img
@@ -139,7 +139,7 @@ function ChartPreviewWidget() {
             />
           </Link>
         ) : (
-          <div className="flex items-center justify-center py-10 text-xs text-white/50">
+          <div className="flex items-center justify-center py-10 text-xs text-white/50 md:min-h-[120px] md:py-0">
             {editEnabled
               ? "Paste a TradingView share link to preview"
               : "Chart is locked. Click Edit to change."}
