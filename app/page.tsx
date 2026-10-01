@@ -296,10 +296,11 @@ export default function Page() {
           style={{ background: "rgba(255,255,255,0.05)", mixBlendMode: "screen" }}
         />
 
-        {/* Desktop floating widgets */}
-        <div className="fixed right-6 top-6 z-30 hidden md:block w-[340px] max-h-[calc(100vh-3rem)] overflow-y-auto space-y-3">
+        {/* Desktop floating widgets: prices top-right, email capture bottom-right */}
+        <div className="fixed right-6 top-6 z-30 hidden md:block w-[340px] max-h-[calc(100vh-3rem)] overflow-y-auto">
           <PriceWidget />
-          {/* Email capture sits under prices on desktop (same column/width) */}
+        </div>
+        <div className="fixed right-6 bottom-6 z-30 hidden md:block w-[340px] max-h-[calc(100vh-3rem)] overflow-y-auto">
           <EmailCapture />
         </div>
 
