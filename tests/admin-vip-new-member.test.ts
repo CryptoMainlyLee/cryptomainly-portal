@@ -6,6 +6,8 @@ import {
   normalizeDisplayName,
   normalizeEmail,
   normalizeTelegramUsername,
+  newMemberRpcErrorCodeFromDetail,
+  requiresSimilarNameAcknowledgement,
   validateNewMemberDraft,
   type NewMemberDraft,
 } from "../app/admin/vip/_lib/new-member.ts";
@@ -134,4 +136,18 @@ test("does not warn for unrelated display names", () => {
 test("preserves similar-name acknowledgement in validated data", () => {
   const result = validateNewMemberDraft(paidDraft({ similarNameAcknowledged: true }));
   assert.equal(result.similarNameAcknowledged, true);
+});
+
+test("maps only known Add Member RPC errors to safe codes", () => {
+  assert.equal(newMemberRpcErrorCodeFromDetail('{"message":"DUPLICATE_EMAIL"}'), "DUPLICATE_EMAIL");
+  assert.equal(newMemberRpcErrorCodeFromDetail('duplicate: DUPLICATE_TELEGRAM'), "DUPLICATE_TELEGRAM");
+  assert.equal(newMemberRpcErrorCodeFromDetail('error DUPLICATE_TX_HASH'), "DUPLICATE_TX_HASH");
+  assert.equal(newMemberRpcErrorCodeFromDetail('error INVALID_INPUT'), "INVALID_INPUT");
+  assert.equal(newMemberRpcErrorCodeFromDetail('raw postgres detail'), null);
+});
+
+test("requires acknowledgement only when similar names exist", () => {
+  assert.equal(requiresSimilarNameAcknowledgement(1, false), true);
+  assert.equal(requiresSimilarNameAcknowledgement(2, true), false);
+  assert.equal(requiresSimilarNameAcknowledgement(0, false), false);
 });

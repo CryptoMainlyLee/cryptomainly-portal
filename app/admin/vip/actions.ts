@@ -11,6 +11,8 @@ import {
 import {
   addMembershipTime,
   changeMembershipExpiry,
+  checkNewMemberDuplicates,
+  createNewMember,
   MembershipActionError,
   reactivateMembership,
   renewActiveMembership,
@@ -25,6 +27,12 @@ import {
   validateRenewAmount,
   type DurationUnit,
 } from "./_lib/membership-actions";
+import {
+  buildNewMemberPreview,
+  requiresSimilarNameAcknowledgement,
+  validateNewMemberDraft,
+  type NewMemberDraft,
+} from "./_lib/new-member";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -88,6 +96,115 @@ export async function loginAction(formData: FormData) {
 export async function logoutAction() {
   await destroyAdminSession();
   redirect("/admin/vip/login");
+}
+
+function validationMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Please check the member details and try again.";
+}
+
+export async function checkNewMemberDuplicatesAction(input: NewMemberDraft) {
+  await requireAdminSession();
+
+  let preview;
+  try {
+    preview = buildNewMemberPreview(input);
+  } catch (error) {
+    return { ok: false, code: "INVALID_INPUT", message: validationMessage(error) } as const;
+  }
+
+  try {
+    const duplicates = await checkNewMemberDuplicates(preview);
+    return { ok: true, preview, duplicates } as const;
+  } catch {
+    return {
+      ok: false,
+      code: "SERVER_ERROR",
+      message: "The duplicate check could not be completed. Nothing has been saved.",
+    } as const;
+  }
+}
+
+export async function createNewMemberAction(input: NewMemberDraft) {
+  await requireAdminSession();
+
+  let validated;
+  try {
+    validated = validateNewMemberDraft(input);
+  } catch (error) {
+    return { ok: false, code: "INVALID_INPUT", message: validationMessage(error) } as const;
+  }
+
+  let duplicates;
+  try {
+    duplicates = await checkNewMemberDuplicates(validated);
+  } catch {
+    return {
+      ok: false,
+      code: "SERVER_ERROR",
+      message: "The duplicate check could not be completed. Nothing has been saved.",
+    } as const;
+  }
+
+  if (duplicates.hardMatches.length > 0) {
+    const first = duplicates.hardMatches[0];
+    return {
+      ok: false,
+      code: first.field === "email" ? "DUPLICATE_EMAIL" : "DUPLICATE_TELEGRAM",
+      message: "This identity already belongs to an existing member. No new member was created.",
+      existingMemberId: first.memberId,
+      hardMatches: duplicates.hardMatches,
+    } as const;
+  }
+
+  if (
+    requiresSimilarNameAcknowledgement(
+      duplicates.similarNameMatches.length,
+      validated.similarNameAcknowledged
+    )
+  ) {
+    return {
+      ok: false,
+      code: "SIMILAR_NAME_ACK_REQUIRED",
+      message: "Confirm that this is genuinely a new person before creating the member.",
+      similarNameMatches: duplicates.similarNameMatches,
+    } as const;
+  }
+
+  try {
+    const created = await createNewMember(validated, "vip-admin");
+    revalidatePath("/admin/vip");
+    revalidatePath(`/admin/vip/${created.member_id}`);
+    return { ok: true, memberId: created.member_id } as const;
+  } catch (error) {
+    if (error instanceof MembershipActionError) {
+      if (error.code === "DUPLICATE_EMAIL" || error.code === "DUPLICATE_TELEGRAM") {
+        const latest = await checkNewMemberDuplicates(validated).catch(() => null);
+        const first = latest?.hardMatches[0];
+        return {
+          ok: false,
+          code: error.code,
+          message: "This identity was linked to an existing member before the save completed.",
+          existingMemberId: first?.memberId,
+          hardMatches: latest?.hardMatches ?? [],
+        } as const;
+      }
+      if (error.code === "DUPLICATE_TX_HASH") {
+        return {
+          ok: false,
+          code: "DUPLICATE_TX_HASH",
+          message: "That transaction hash is already recorded. Nothing has been saved.",
+        } as const;
+      }
+      if (error.code === "INVALID_INPUT") {
+        return { ok: false, code: "INVALID_INPUT", message: "The submitted member details are invalid." } as const;
+      }
+    }
+    return {
+      ok: false,
+      code: "SERVER_ERROR",
+      message: "The member could not be created. Nothing has been saved.",
+    } as const;
+  }
 }
 
 export async function updateMembershipNoteAction(formData: FormData) {

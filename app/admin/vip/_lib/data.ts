@@ -1,6 +1,12 @@
 import "server-only";
 
 import type { DurationUnit } from "./membership-actions";
+import {
+  isSimilarDisplayName,
+  newMemberRpcErrorCodeFromDetail,
+  type NewMemberRpcErrorCode,
+  type ValidatedNewMemberDraft,
+} from "./new-member";
 
 export type MemberOverview = {
   member_id: string;
@@ -75,12 +81,37 @@ export type MembershipActionResult = {
   event_id: string;
 };
 
+export type NewMemberDuplicateMatch = {
+  memberId: string;
+  displayName: string;
+  field: "email" | "telegram";
+};
+
+export type NewMemberSimilarNameMatch = {
+  memberId: string;
+  displayName: string;
+};
+
+export type NewMemberDuplicateResult = {
+  hardMatches: NewMemberDuplicateMatch[];
+  similarNameMatches: NewMemberSimilarNameMatch[];
+};
+
+export type NewMemberCreateResult = {
+  member_id: string;
+  membership_period_id: string;
+  payment_id: string | null;
+  telegram_account_id: string | null;
+  event_id: string;
+};
+
 export type MembershipActionErrorCode =
   | "STALE_PREVIEW"
   | "PAST_EXPIRY_ACK_REQUIRED"
   | "ACTION_NOT_ALLOWED"
   | "INVALID_INPUT"
-  | "OVERLAPPING_ENTITLEMENT";
+  | "OVERLAPPING_ENTITLEMENT"
+  | NewMemberRpcErrorCode;
 
 export class MembershipActionError extends Error {
   code: MembershipActionErrorCode;
@@ -111,11 +142,13 @@ function config() {
 }
 
 function actionErrorFromDetail(detail: string): MembershipActionError | null {
+  const newMemberCode = newMemberRpcErrorCodeFromDetail(detail);
+  if (newMemberCode) return new MembershipActionError(newMemberCode);
+
   const codes: MembershipActionErrorCode[] = [
     "STALE_PREVIEW",
     "PAST_EXPIRY_ACK_REQUIRED",
     "ACTION_NOT_ALLOWED",
-    "INVALID_INPUT",
     "OVERLAPPING_ENTITLEMENT",
   ];
   const code = codes.find((candidate) => detail.includes(candidate));
@@ -161,6 +194,56 @@ export async function getMembers() {
   );
 }
 
+export async function checkNewMemberDuplicates(
+  input: Pick<ValidatedNewMemberDraft, "displayName" | "email" | "telegramUsername">
+): Promise<NewMemberDuplicateResult> {
+  const [members, telegramAccounts] = await Promise.all([
+    supabaseRest<Array<{ id: string; display_name: string; email: string | null }>>(
+      "members?select=id,display_name,email&order=display_name.asc"
+    ),
+    supabaseRest<Array<{ member_id: string; telegram_username: string | null }>>(
+      "telegram_accounts?select=member_id,telegram_username"
+    ),
+  ]);
+
+  const memberById = new Map(members.map((member) => [member.id, member]));
+  const hardMatches: NewMemberDuplicateMatch[] = [];
+
+  if (input.email) {
+    for (const member of members) {
+      if (member.email?.trim().toLowerCase() === input.email) {
+        hardMatches.push({ memberId: member.id, displayName: member.display_name, field: "email" });
+      }
+    }
+  }
+
+  if (input.telegramUsername) {
+    for (const account of telegramAccounts) {
+      const normalized = account.telegram_username?.trim().replace(/^@/, "").toLowerCase();
+      if (normalized === input.telegramUsername) {
+        const member = memberById.get(account.member_id);
+        hardMatches.push({
+          memberId: account.member_id,
+          displayName: member?.display_name ?? "Existing member",
+          field: "telegram",
+        });
+      }
+    }
+  }
+
+  const similarNameMatches = members
+    .filter((member) => {
+      try {
+        return isSimilarDisplayName(input.displayName, member.display_name);
+      } catch {
+        return false;
+      }
+    })
+    .map((member) => ({ memberId: member.id, displayName: member.display_name }));
+
+  return { hardMatches, similarNameMatches };
+}
+
 export async function getMember(memberId: string) {
   const rows = await supabaseRest<MemberOverview[]>(
     `admin_member_overview?select=*&member_id=eq.${encodeURIComponent(memberId)}&limit=1`
@@ -182,6 +265,36 @@ export async function getMemberHistory(memberId: string) {
       memberId
     )}&order=occurred_at.desc`
   );
+}
+
+export async function createNewMember(
+  input: ValidatedNewMemberDraft,
+  actorId = "vip-admin"
+): Promise<NewMemberCreateResult> {
+  const rows = await supabaseRest<NewMemberCreateResult[]>("rpc/admin_create_member", {
+    method: "POST",
+    body: {
+      p_display_name: input.displayName,
+      p_email: input.email,
+      p_telegram_username: input.telegramUsername,
+      p_entitlement_type: input.entitlementType,
+      p_start_date: input.startDate,
+      p_duration_value: input.durationValue,
+      p_duration_unit: input.durationUnit,
+      p_final_expiry: input.finalExpiry,
+      p_expiry_override_reason: input.expiryOverrideReason,
+      p_reason: input.reason,
+      p_amount: input.amount,
+      p_currency: input.currency,
+      p_payment_date: input.paymentDate,
+      p_tx_hash: input.txHash,
+      p_payment_note: input.paymentNote,
+      p_actor_id: actorId,
+    },
+  });
+
+  if (!rows?.[0]) throw new Error("Supabase Add Member returned no result.");
+  return rows[0];
 }
 
 export async function updateMembershipPeriodNote(input: {

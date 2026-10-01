@@ -1,4 +1,3 @@
-// @ts-ignore -- Node's native TypeScript test runner requires explicit .ts specifiers.
 import {
   addMembershipDuration,
   assertIsoDate,
@@ -185,4 +184,27 @@ export function buildNewMemberPreview(input: NewMemberDraft): NewMemberPreview {
     expiryOverridden: validated.finalExpiry !== validated.calculatedExpiry,
     telegramLinked: false,
   };
+}
+
+export type NewMemberRpcErrorCode =
+  | "INVALID_INPUT"
+  | "DUPLICATE_EMAIL"
+  | "DUPLICATE_TELEGRAM"
+  | "DUPLICATE_TX_HASH";
+
+export function newMemberRpcErrorCodeFromDetail(detail: string): NewMemberRpcErrorCode | null {
+  const codes: NewMemberRpcErrorCode[] = [
+    "DUPLICATE_EMAIL",
+    "DUPLICATE_TELEGRAM",
+    "DUPLICATE_TX_HASH",
+    "INVALID_INPUT",
+  ];
+  return codes.find((code) => String(detail ?? "").includes(code)) ?? null;
+}
+
+export function requiresSimilarNameAcknowledgement(
+  similarMatchCount: number,
+  acknowledged: boolean
+): boolean {
+  return similarMatchCount > 0 && !acknowledged;
 }
