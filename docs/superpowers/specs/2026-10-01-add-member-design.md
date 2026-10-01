@@ -1,7 +1,7 @@
 # CryptoMainly Add Member — Design Spec
 
 Date: 2026-10-01
-Status: Design approved in chat; awaiting written-spec review
+Status: Approved 2026-10-01
 
 ## Purpose
 
