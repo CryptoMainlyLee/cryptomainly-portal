@@ -134,6 +134,7 @@ function historySummary(event: MemberHistory) {
 }
 
 const ACTION_SUCCESS: Record<string, string> = {
+  "member-created": "Member created. Initial membership and permanent audit records were saved together.",
   "expiry-changed": "Expiry changed and permanent audit records were created.",
   "time-added": "Membership time added and permanent audit records were created.",
   renewed: "Paid renewal recorded. Membership, payment and audit records were saved together.",

@@ -108,7 +108,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
               VIP Membership Admin
             </h1>
             <p className="mt-2 text-sm text-slate-400">
-              Phase 2 • read-only • live Supabase data
+              Phase 2 • audited membership administration • live Supabase data
             </p>
           </div>
 
@@ -191,6 +191,12 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                 className="rounded-full border border-amber-500/30 px-3 py-1.5 text-amber-300"
               >
                 Review queue
+              </Link>
+              <Link
+                href="/admin/vip/new"
+                className="rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 font-medium text-amber-200 hover:bg-amber-400/20"
+              >
+                Add Member
               </Link>
             </div>
           </div>
@@ -285,8 +291,8 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
         </section>
 
         <p className="mt-5 text-center text-xs text-slate-600">
-          Read-only safety mode. No expiry, Telegram, payment or membership writes
-          are available in Phase 2A.
+          Automation safety mode. Automatic Telegram removals, reminders, campaigns and
+          payment activation remain disabled.
         </p>
       </div>
     </main>
