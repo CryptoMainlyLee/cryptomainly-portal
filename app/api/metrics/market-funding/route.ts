@@ -7,7 +7,7 @@ const TTL_MS = 60_000;
 const TIMEOUT_MS = 8_000;
 
 type Venue = {
-  exchange: "Binance" | "Bybit" | "Bitget" | "OKX";
+  exchange: "Binance" | "Bybit" | "Bitget" | "OKX" | "Hyperliquid" | "Gate.io";
   fundingRate: number;
   fundingIntervalHours: number;
   fundingRate8h: number;
@@ -126,6 +126,29 @@ async function okx(base: "BTC" | "ETH"): Promise<Venue> {
   return makeVenue("OKX", finite(f?.fundingRate), intervalHours, finite(o?.oiUsd));
 }
 
+async function hyperliquid(base: "BTC" | "ETH"): Promise<Venue> {
+  const json = await fetch("https://api.hyperliquid.xyz/info", {
+    method: "POST", cache: "no-store",
+    headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "CryptoMainly/1.0" },
+    body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+  }).then(async (r) => { if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json(); });
+  const meta = json?.[0]?.universe;
+  const contexts = json?.[1];
+  const idx = Array.isArray(meta) ? meta.findIndex((x: any) => x?.name === base) : -1;
+  const row = idx >= 0 ? contexts?.[idx] : null;
+  const oi = finite(row?.openInterest), mark = finite(row?.markPx);
+  return makeVenue("Hyperliquid", finite(row?.funding), 1, oi != null && mark != null ? oi * mark : null);
+}
+
+async function gate(base: "BTC" | "ETH"): Promise<Venue> {
+  const contract = `${base}_USDT`;
+  const [info, stats] = await Promise.all([
+    fetchJson(`https://api.gateio.ws/api/v4/futures/usdt/contracts/${contract}`),
+    fetchJson(`https://api.gateio.ws/api/v4/futures/usdt/contract_stats?contract=${contract}&limit=1`),
+  ]);
+  return makeVenue("Gate.io", finite(info?.funding_rate), (finite(info?.funding_interval) ?? 0) / 3600, finite(stats?.[0]?.open_interest_usd));
+}
+
 async function safe(label: string, fn: () => Promise<Venue>) {
   try {
     return { venue: await fn(), error: null as string | null };
@@ -151,6 +174,8 @@ async function buildCoin(base: "BTC" | "ETH") {
     safe("Bybit", () => bybit(symbol)),
     safe("Bitget", () => bitget(symbol)),
     safe("OKX", () => okx(base)),
+    safe("Hyperliquid", () => hyperliquid(base)),
+    safe("Gate.io", () => gate(base)),
   ]);
   return aggregate(results);
 }
@@ -168,8 +193,8 @@ export async function GET() {
   const [btc, eth] = await Promise.all([buildCoin("BTC"), buildCoin("ETH")]);
   const allVenues = [...btc.venues, ...eth.venues];
   const sources = Array.from(new Set(allVenues.map((v) => v.exchange)));
-  const ok = btc.fundingRate != null || eth.fundingRate != null;
-  const stale = btc.errors.length > 0 || eth.errors.length > 0;
+  const ok = btc.fundingRate != null && eth.fundingRate != null && btc.venues.length >= 3 && eth.venues.length >= 3;
+  const stale = !ok;
   const payload = { normalizedHours: 8 as const, btc, eth, sources, ts: now };
 
   if (!ok) {
