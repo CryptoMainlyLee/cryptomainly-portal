@@ -108,7 +108,7 @@ export default function MarketMetricsWidget() {
   // hydrate from session cache so reloads don’t flash empty
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem("cm_metrics_cache_proxy_v2");
+      const raw = sessionStorage.getItem("cm_metrics_cache_proxy_v3");
       if (raw) {
         const j = JSON.parse(raw);
         _setDomBTC(j.domBTC ?? null);
@@ -132,7 +132,7 @@ export default function MarketMetricsWidget() {
   useEffect(() => {
     try {
       sessionStorage.setItem(
-        "cm_metrics_cache_proxy_v2",
+        "cm_metrics_cache_proxy_v3",
         JSON.stringify({
           domBTC, domETH, mcap, vol24h, fngValue, fngLabel,
           oiBTC, oiETH, frBTC, frETH, lsBTC, lsETH,
@@ -191,29 +191,37 @@ export default function MarketMetricsWidget() {
     }
   };
 
-  // 2) BTC/ETH derivatives via the existing futures API route, now backed by Bitget public data.
-  //    Binance is deliberately not used here.
+  // 2) BTC/ETH derivatives. OI and long/short remain Bitget-specific; funding
+  //    prefers the new cross-exchange OI-weighted 8h market rate.
   const fetchDerivatives = async () => {
     try {
       derivativesAbort.current?.abort();
       const ac = new AbortController();
       derivativesAbort.current = ac;
 
-      const d = await fetch("/api/metrics/futures", {
-        cache: "no-store",
-        signal: ac.signal,
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
+      const [d, marketFunding] = await Promise.all([
+        fetch("/api/metrics/futures", { cache: "no-store", signal: ac.signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+        fetch("/api/metrics/market-funding", { cache: "no-store", signal: ac.signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ]);
 
       if (d?.ok) {
         updatePair(setOiBTC, d.btc?.oiUsd);
         updatePair(setOiETH, d.eth?.oiUsd);
-        updatePair(setFrBTC, d.btc?.fundingRate);
-        updatePair(setFrETH, d.eth?.fundingRate);
         updatePair(setLsBTC, d.btc?.longShortRatio);
         updatePair(setLsETH, d.eth?.longShortRatio);
-        if (!d.stale) setLastOkDerivatives(Date.now());
+      }
+
+      // Prefer the cross-exchange OI-weighted 8h market rate. If that route
+      // is unavailable, retain the original Bitget funding values as fallback.
+      updatePair(setFrBTC, marketFunding?.btc?.fundingRate ?? d?.btc?.fundingRate);
+      updatePair(setFrETH, marketFunding?.eth?.fundingRate ?? d?.eth?.fundingRate);
+
+      if ((d?.ok && !d.stale) || (marketFunding?.ok && !marketFunding.stale)) {
+        setLastOkDerivatives(Date.now());
       }
     } catch (e: any) {
       if (e?.name === "AbortError") return;
@@ -328,11 +336,14 @@ export default function MarketMetricsWidget() {
           </span>
         </li>
 
-        {/* Funding Rate */}
+        {/* Cross-exchange market funding */}
         <li className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5" title="Open-interest-weighted funding across Binance, Bybit, Bitget and OKX, normalized to an 8-hour equivalent">
             <span className="text-[14px]">💸</span>
-            <span className="text-white">Funding Rate</span>
+            <span className="flex flex-col leading-none">
+              <span className="text-white">Market Funding</span>
+              <span className="mt-0.5 text-[9px] text-white/40">OI-wtd 8h</span>
+            </span>
           </span>
           <span className="text-[12px]">
             {(() => {
@@ -410,7 +421,7 @@ export default function MarketMetricsWidget() {
 
       {/* Footer credits (as before) */}
       <div className="mt-3 border-t border-white/10 pt-2 text-center text-[11px] leading-snug">
-        <span className="text-white/60">Market data links: </span>
+        <span className="text-white/60">Market references: </span>
         <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.coinglass.com/">
           Coinglass
         </a>
@@ -419,10 +430,12 @@ export default function MarketMetricsWidget() {
           Alternative.me
         </a>
         <div className="mt-1 text-[10px] text-white/45">
-          Derivatives via{" "}
+          OI &amp; L/S via{" "}
           <a className="text-[#00ff7f] hover:underline font-medium" target="_blank" rel="noreferrer" href="https://www.bitget.com/referral/register?clacCode=WLRHARHW&from=%2Fevents%2Freferral-all-program&source=events&utmSource=PremierInviter&shareid=telegram">
             Bitget
           </a>
+          <span className="text-white/30"> • </span>
+          Funding: Binance · Bybit · Bitget · OKX
         </div>
       </div>
     </div>
