@@ -175,6 +175,12 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
 
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
               <Link
+                href="/admin/vip/new"
+                className="rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 font-medium text-amber-200 hover:bg-amber-400/20"
+              >
+                Add Member
+              </Link>
+              <Link
                 href="/admin/vip"
                 className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300"
               >
@@ -191,12 +197,6 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                 className="rounded-full border border-amber-500/30 px-3 py-1.5 text-amber-300"
               >
                 Review queue
-              </Link>
-              <Link
-                href="/admin/vip/new"
-                className="rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 font-medium text-amber-200 hover:bg-amber-400/20"
-              >
-                Add Member
               </Link>
             </div>
           </div>
