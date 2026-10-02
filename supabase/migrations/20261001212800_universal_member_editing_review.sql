@@ -1,0 +1,352 @@
+-- CryptoMainly Universal Member Editing & Review Resolution.
+-- Review cases are reusable workflow records; legacy migration flags are transitional provenance.
+-- Operational corrections added later in this migration remain scoped and audited.
+
+create table public.member_review_cases (
+  id uuid primary key default gen_random_uuid(),
+  member_id uuid not null references public.members(id) on delete restrict,
+  membership_period_id uuid references public.membership_periods(id) on delete restrict,
+  payment_id uuid references public.payments(id) on delete restrict,
+  origin text not null,
+  category text not null,
+  opening_reason text not null,
+  status text not null default 'OPEN',
+  opened_at timestamptz not null default now(),
+  opened_by text not null,
+  resolution_outcome text,
+  resolution_note text,
+  resolved_at timestamptz,
+  resolved_by text,
+  created_at timestamptz not null default now(),
+  constraint member_review_cases_link_check
+    check (num_nonnulls(membership_period_id, payment_id) <= 1),
+  constraint member_review_cases_origin_check
+    check (origin in ('legacy_migration','manual','add_member')),
+  constraint member_review_cases_category_check
+    check (category in ('identity_contact','membership','payment','telegram','historical','other')),
+  constraint member_review_cases_status_check
+    check (status in ('OPEN','RESOLVED')),
+  constraint member_review_cases_outcome_check
+    check (resolution_outcome is null or resolution_outcome in (
+      'CORRECTED_DATA_UPDATED','EXISTING_DATA_CONFIRMED','HISTORICAL_DETAIL_UNKNOWN_ACCEPTED'
+    )),
+  constraint member_review_cases_opening_reason_check
+    check (btrim(opening_reason) <> '' and char_length(btrim(opening_reason)) <= 500),
+  constraint member_review_cases_opened_by_check
+    check (btrim(opened_by) <> '' and char_length(btrim(opened_by)) <= 200),
+  constraint member_review_cases_resolution_note_check
+    check (resolution_note is null or (btrim(resolution_note) <> '' and char_length(btrim(resolution_note)) <= 500)),
+  constraint member_review_cases_resolved_by_check
+    check (resolved_by is null or (btrim(resolved_by) <> '' and char_length(btrim(resolved_by)) <= 200)),
+  constraint member_review_cases_resolution_state_check check (
+    (status='OPEN' and resolution_outcome is null and resolution_note is null
+      and resolved_at is null and resolved_by is null)
+    or
+    (status='RESOLVED' and resolution_outcome is not null and resolution_note is not null
+      and resolved_at is not null and resolved_by is not null)
+  ),
+  constraint member_review_cases_resolution_time_check
+    check (resolved_at is null or resolved_at >= opened_at)
+);
+
+create unique index member_review_cases_one_open_issue_uidx
+  on public.member_review_cases(member_id, membership_period_id, payment_id, category)
+  nulls not distinct
+  where status='OPEN';
+
+alter table public.member_review_cases enable row level security;
+
+create view public.admin_member_review_summary
+with (security_invoker = true)
+as
+select
+  agg.member_id,
+  agg.open_review_count,
+  agg.review_categories,
+  first_case.opening_reason as review_reason,
+  first_case.opened_at as review_opened_at
+from (
+  select
+    rc.member_id,
+    count(*)::integer as open_review_count,
+    array_agg(distinct rc.category order by rc.category) as review_categories
+  from public.member_review_cases rc
+  where rc.status='OPEN'
+  group by rc.member_id
+) agg
+join lateral (
+  select rc.opening_reason, rc.opened_at
+  from public.member_review_cases rc
+  where rc.member_id=agg.member_id and rc.status='OPEN'
+  order by rc.opened_at, rc.id
+  limit 1
+) first_case on true;
+
+revoke all on table public.member_review_cases from public, anon, authenticated, service_role;
+revoke all on table public.admin_member_review_summary from public, anon, authenticated, service_role;
+grant select on table public.member_review_cases to service_role;
+grant select on table public.admin_member_review_summary to service_role;
+
+-- Seed one open legacy case for every live period still carrying migration_review=true.
+-- This is intentionally idempotent and changes no entitlement or legacy-review flag.
+with seed_source as (
+  select
+    mp.member_id,
+    mp.id as membership_period_id,
+    case
+      when mp.entitlement_type='complimentary' and mp.expiry_mode='manual_no_expiry'
+        and mp.removal_protected then 'membership'
+      when mp.entitlement_type='paid' and mp.starts_on is null and exists (
+        select 1 from public.current_member_status cms
+        where cms.member_id=mp.member_id and cms.membership_period_id=mp.id and cms.status='ACTIVE'
+      ) then 'membership'
+      else 'historical'
+    end as category,
+    case
+      when mp.entitlement_type='complimentary' and mp.expiry_mode='manual_no_expiry'
+        and mp.removal_protected then 'Protected indefinite complimentary access requires confirmation.'
+      when mp.entitlement_type='paid' and mp.starts_on is null and exists (
+        select 1 from public.current_member_status cms
+        where cms.member_id=mp.member_id and cms.membership_period_id=mp.id and cms.status='ACTIVE'
+      ) then 'Active paid membership start date is missing and requires reconciliation.'
+      when m.first_joined_on is not null and mp.expires_on is not null
+        and m.first_joined_on > mp.expires_on then 'Legacy relationship date occurs after recorded membership expiry and requires review.'
+      when mp.starts_on is null then 'Historical membership start date unavailable from migrated source.'
+      when mp.starts_on is not null and mp.expires_on is not null
+        and mp.expires_on <= mp.starts_on then 'Historical membership dates are inconsistent and require review.'
+      when mp.source='legacy_history_reconstruction'
+        or position('review' in lower(coalesce(mp.legacy_notes,''))) > 0
+        then 'Historical payment/membership classification requires confirmation.'
+      else 'Legacy migration record requires manual review.'
+    end as opening_reason
+  from public.membership_periods mp
+  join public.members m on m.id=mp.member_id
+  where mp.migration_review=true
+),
+inserted_cases as (
+  insert into public.member_review_cases(
+    member_id, membership_period_id, origin, category,
+    opening_reason, status, opened_by
+  )
+  select
+    ss.member_id, ss.membership_period_id, 'legacy_migration', ss.category,
+    ss.opening_reason, 'OPEN', 'system/review-case-migration-2026-10-01'
+  from seed_source ss
+  where not exists (
+    select 1 from public.member_review_cases rc
+    where rc.origin='legacy_migration'
+      and rc.membership_period_id=ss.membership_period_id
+  )
+  returning *
+),
+inserted_events as (
+  insert into public.membership_events(
+    member_id, membership_period_id, event_type, reason,
+    actor_type, actor_id, metadata
+  )
+  select
+    ic.member_id, ic.membership_period_id, 'REVIEW_OPENED', ic.opening_reason,
+    'system', ic.opened_by,
+    jsonb_strip_nulls(jsonb_build_object(
+      'review_case_id', ic.id,
+      'origin', ic.origin,
+      'category', ic.category,
+      'membership_period_id', ic.membership_period_id,
+      'payment_id', ic.payment_id
+    ))
+  from inserted_cases ic
+  returning id
+)
+insert into public.audit_log(
+  actor_type, actor_id, action, entity_type, entity_id,
+  before_data, after_data, reason
+)
+select
+  'system', ic.opened_by, 'REVIEW_OPENED', 'member_review_case', ic.id::text,
+  null, to_jsonb(ic), ic.opening_reason
+from inserted_cases ic;
+
+create or replace function public.admin_open_member_review_case(
+  p_member_id uuid,
+  p_membership_period_id uuid,
+  p_payment_id uuid,
+  p_category text,
+  p_reason text,
+  p_actor_id text
+) returns table(review_case_id uuid, review_status text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_category text;
+  v_reason text;
+  v_actor text;
+  v_case public.member_review_cases%rowtype;
+  v_event_period_id uuid;
+begin
+  if p_member_id is null or num_nonnulls(p_membership_period_id,p_payment_id) > 1 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_category := lower(btrim(coalesce(p_category,'')));
+  v_reason := btrim(coalesce(p_reason,''));
+  v_actor := coalesce(nullif(btrim(p_actor_id),''), 'vip-admin');
+  if v_category not in ('identity_contact','membership','payment','telegram','historical','other')
+     or v_reason='' or char_length(v_reason)>500 or char_length(v_actor)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  perform 1 from public.members m where m.id=p_member_id;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if p_membership_period_id is not null then
+    perform 1 from public.membership_periods mp
+    where mp.id=p_membership_period_id and mp.member_id=p_member_id;
+    if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    v_event_period_id := p_membership_period_id;
+  elsif p_payment_id is not null then
+    select p.membership_period_id into v_event_period_id
+    from public.payments p
+    where p.id=p_payment_id and p.member_id=p_member_id;
+    if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  begin
+    insert into public.member_review_cases(
+      member_id, membership_period_id, payment_id, origin, category,
+      opening_reason, status, opened_by
+    ) values (
+      p_member_id, p_membership_period_id, p_payment_id, 'manual', v_category,
+      v_reason, 'OPEN', v_actor
+    ) returning * into v_case;
+  exception when unique_violation then
+    raise exception using errcode='P0001', message='DUPLICATE_REVIEW_CASE';
+  end;
+
+  insert into public.membership_events(
+    member_id, membership_period_id, event_type, reason,
+    actor_type, actor_id, metadata
+  ) values (
+    p_member_id, v_event_period_id, 'REVIEW_OPENED', v_reason,
+    'admin', v_actor,
+    jsonb_strip_nulls(jsonb_build_object(
+      'review_case_id', v_case.id,
+      'origin', v_case.origin,
+      'category', v_case.category,
+      'membership_period_id', v_case.membership_period_id,
+      'payment_id', v_case.payment_id
+    ))
+  );
+
+  insert into public.audit_log(
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'REVIEW_OPENED', 'member_review_case', v_case.id::text,
+    null, to_jsonb(v_case), v_reason
+  );
+
+  return query select v_case.id, v_case.status;
+end;
+$$;
+
+create or replace function public.admin_resolve_member_review_case(
+  p_case_id uuid,
+  p_member_id uuid,
+  p_resolution_outcome text,
+  p_resolution_note text,
+  p_actor_id text
+) returns table(review_case_id uuid, review_status text, membership_period_id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_case public.member_review_cases%rowtype;
+  v_after public.member_review_cases%rowtype;
+  v_outcome text;
+  v_note text;
+  v_actor text;
+  v_event_period_id uuid;
+  v_legacy_flag_cleared boolean := false;
+begin
+  if p_case_id is null or p_member_id is null then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_outcome := upper(btrim(coalesce(p_resolution_outcome,'')));
+  v_note := btrim(coalesce(p_resolution_note,''));
+  v_actor := coalesce(nullif(btrim(p_actor_id),''), 'vip-admin');
+  if v_outcome not in ('CORRECTED_DATA_UPDATED','EXISTING_DATA_CONFIRMED','HISTORICAL_DETAIL_UNKNOWN_ACCEPTED')
+     or v_note='' or char_length(v_note)>500 or char_length(v_actor)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  select rc.* into v_case
+  from public.member_review_cases rc
+  where rc.id=p_case_id and rc.member_id=p_member_id
+  for update;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  if v_case.status <> 'OPEN' then
+    raise exception using errcode='P0001', message='REVIEW_CASE_NOT_OPEN';
+  end if;
+
+  v_event_period_id := v_case.membership_period_id;
+  if v_event_period_id is null and v_case.payment_id is not null then
+    select p.membership_period_id into v_event_period_id
+    from public.payments p where p.id=v_case.payment_id;
+  end if;
+
+  if v_case.origin='legacy_migration' and v_case.membership_period_id is not null then
+    update public.membership_periods mp
+    set migration_review=false
+    where mp.id=v_case.membership_period_id and mp.member_id=p_member_id;
+    if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    v_legacy_flag_cleared := true;
+  end if;
+
+  update public.member_review_cases
+  set status='RESOLVED',
+      resolution_outcome=v_outcome,
+      resolution_note=v_note,
+      resolved_at=now(),
+      resolved_by=v_actor
+  where id=v_case.id
+  returning * into v_after;
+
+  insert into public.membership_events(
+    member_id, membership_period_id, event_type, reason,
+    actor_type, actor_id, metadata
+  ) values (
+    p_member_id, v_event_period_id, 'REVIEW_RESOLVED', v_note,
+    'admin', v_actor,
+    jsonb_strip_nulls(jsonb_build_object(
+      'review_case_id', v_case.id,
+      'origin', v_case.origin,
+      'category', v_case.category,
+      'resolution_outcome', v_outcome,
+      'membership_period_id', v_case.membership_period_id,
+      'payment_id', v_case.payment_id,
+      'legacy_migration_flag_cleared', v_legacy_flag_cleared
+    ))
+  );
+
+  insert into public.audit_log(
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'REVIEW_RESOLVED', 'member_review_case', v_case.id::text,
+    to_jsonb(v_case), to_jsonb(v_after), v_note
+  );
+
+  return query select v_after.id, v_after.status, v_after.membership_period_id;
+end;
+$$;
+
+revoke all on function public.admin_open_member_review_case(uuid,uuid,uuid,text,text,text)
+  from public, anon, authenticated;
+revoke all on function public.admin_resolve_member_review_case(uuid,uuid,text,text,text)
+  from public, anon, authenticated;
+grant execute on function public.admin_open_member_review_case(uuid,uuid,uuid,text,text,text)
+  to service_role;
+grant execute on function public.admin_resolve_member_review_case(uuid,uuid,text,text,text)
+  to service_role;
