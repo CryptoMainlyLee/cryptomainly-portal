@@ -12,11 +12,18 @@ import {
   addMembershipTime,
   changeMembershipExpiry,
   checkNewMemberDuplicates,
+  correctMembershipPeriod,
+  correctPayment,
   createNewMember,
+  findMemberIdentityConflict,
   MembershipActionError,
+  openReviewCase,
   reactivateMembership,
+  resolveReviewCase,
   renewActiveMembership,
+  updateMemberDetails,
   updateMembershipPeriodNote,
+  updateTelegramUsername,
 } from "./_lib/data";
 import {
   assertIsoDate,
@@ -27,6 +34,24 @@ import {
   validateRenewAmount,
   type DurationUnit,
 } from "./_lib/membership-actions";
+import {
+  assertHasChanges,
+  buildChangeSet,
+  editingActionFailureForCode,
+  editingRpcErrorCodeFromDetail,
+  requiresStructuralReason,
+  validateMemberDetailsDraft,
+  validateMembershipPeriodDraft,
+  validatePaymentDraft,
+  validateTelegramUsernameDraft,
+  type MemberDetailsDraft,
+  type MembershipPeriodDraft,
+  type PaymentDraft,
+} from "./_lib/member-editing";
+import {
+  validateReviewOpenDraft,
+  validateReviewResolutionDraft,
+} from "./_lib/review-cases";
 import {
   buildNewMemberPreview,
   requiresSimilarNameAcknowledgement,
@@ -370,4 +395,349 @@ export async function renewMembershipAction(formData: FormData) {
   redirect(
     `/admin/vip/${memberId}?action=${mode === "reactivation" ? "reactivated" : "renewed"}`
   );
+}
+
+
+type MemberDetailsSnapshot = {
+  display_name: string;
+  email: string | null;
+  first_joined_on: string | null;
+  admin_notes: string | null;
+  marketing_status: "unknown" | "allowed" | "opted_out";
+};
+
+type MembershipPeriodSnapshot = {
+  entitlement_type: "paid" | "complimentary" | "trial" | "lifetime" | "admin";
+  plan_name: string | null;
+  starts_on: string | null;
+  expires_on: string | null;
+  expiry_mode: "fixed" | "lifetime" | "manual_no_expiry";
+  removal_protected: boolean;
+  protection_reason: string | null;
+  ended_early_on: string | null;
+  admin_note: string | null;
+};
+
+type PaymentSnapshot = {
+  amount: number | null;
+  currency: string | null;
+  network: string | null;
+  tx_hash: string | null;
+  status: "pending" | "verified" | "rejected" | "refunded";
+  received_at: string | null;
+  notes: string | null;
+};
+
+function typedUuid(value: string) {
+  if (!UUID_PATTERN.test(value)) throw new Error("Invalid UUID");
+  return value;
+}
+
+function typedOptionalUuid(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  return text ? typedUuid(text) : null;
+}
+
+function optionalEditingReason(value: string | null | undefined) {
+  return normalizeOptionalText(String(value ?? ""), 500);
+}
+
+function editingFailure(error: unknown) {
+  if (error instanceof MembershipActionError) {
+    return editingActionFailureForCode(editingRpcErrorCodeFromDetail(error.code));
+  }
+  return editingActionFailureForCode(null);
+}
+
+function revalidateMemberPages(memberId: string) {
+  revalidatePath("/admin/vip");
+  revalidatePath(`/admin/vip/${memberId}`);
+}
+
+function memberDetailsRpcState(validated: ReturnType<typeof validateMemberDetailsDraft>): MemberDetailsSnapshot {
+  return {
+    display_name: validated.displayName,
+    email: validated.email,
+    first_joined_on: validated.firstJoinedOn,
+    admin_notes: validated.adminNotes,
+    marketing_status: validated.marketingStatus,
+  };
+}
+
+function membershipPeriodRpcState(
+  validated: ReturnType<typeof validateMembershipPeriodDraft>
+): MembershipPeriodSnapshot {
+  return {
+    entitlement_type: validated.entitlementType,
+    plan_name: validated.planName,
+    starts_on: validated.startsOn,
+    expires_on: validated.expiresOn,
+    expiry_mode: validated.expiryMode,
+    removal_protected: validated.removalProtected,
+    protection_reason: validated.protectionReason,
+    ended_early_on: validated.endedEarlyOn,
+    admin_note: validated.adminNote,
+  };
+}
+
+function paymentRpcState(validated: ReturnType<typeof validatePaymentDraft>): PaymentSnapshot {
+  return {
+    amount: validated.amount,
+    currency: validated.currency,
+    network: validated.network,
+    tx_hash: validated.txHash,
+    status: validated.status,
+    received_at: validated.receivedAt,
+    notes: validated.notes,
+  };
+}
+
+function invalidEditingResult() {
+  return editingActionFailureForCode("INVALID_INPUT");
+}
+
+export async function updateMemberDetailsAction(input: {
+  memberId: string;
+  expected: MemberDetailsSnapshot;
+  proposed: MemberDetailsDraft;
+  reason?: string | null;
+}) {
+  await requireAdminSession();
+  let memberId: string;
+  let proposed: MemberDetailsSnapshot;
+  let reason: string | null;
+  try {
+    memberId = typedUuid(input.memberId);
+    proposed = memberDetailsRpcState(validateMemberDetailsDraft(input.proposed));
+    const changes = buildChangeSet(input.expected, proposed);
+    assertHasChanges(changes);
+    reason = optionalEditingReason(input.reason);
+    if (requiresStructuralReason(changes.map((change) => change.field))) {
+      reason = validateReason(String(input.reason ?? ""));
+    }
+  } catch {
+    return invalidEditingResult();
+  }
+
+  try {
+    await updateMemberDetails({
+      memberId,
+      expected: input.expected,
+      proposed,
+      reason,
+      actorId: "vip-admin",
+    });
+    revalidateMemberPages(memberId);
+    return { ok: true } as const;
+  } catch (error) {
+    const failure = editingFailure(error);
+    if (failure.code === "DUPLICATE_EMAIL") {
+      const conflict = await findMemberIdentityConflict({
+        excludeMemberId: memberId,
+        email: proposed.email,
+      }).catch(() => null);
+      return { ...failure, existingMemberId: conflict?.memberId } as const;
+    }
+    return failure;
+  }
+}
+
+export async function updateTelegramUsernameAction(input: {
+  memberId: string;
+  telegramAccountId: string | null;
+  expectedUsername: string | null;
+  proposedUsername: string | null;
+  reason?: string | null;
+}) {
+  await requireAdminSession();
+  let memberId: string;
+  let telegramAccountId: string | null;
+  let expectedUsername: string | null;
+  let newUsername: string | null;
+  let reason: string | null;
+  try {
+    memberId = typedUuid(input.memberId);
+    telegramAccountId = typedOptionalUuid(input.telegramAccountId);
+    expectedUsername = validateTelegramUsernameDraft({
+      telegramUsername: input.expectedUsername,
+    }).telegramUsername;
+    newUsername = validateTelegramUsernameDraft({
+      telegramUsername: input.proposedUsername,
+    }).telegramUsername;
+    assertHasChanges(
+      buildChangeSet(
+        { telegram_username: expectedUsername },
+        { telegram_username: newUsername }
+      )
+    );
+    reason = optionalEditingReason(input.reason);
+  } catch {
+    return invalidEditingResult();
+  }
+
+  try {
+    await updateTelegramUsername({
+      memberId,
+      telegramAccountId,
+      expectedUsername,
+      newUsername,
+      reason,
+      actorId: "vip-admin",
+    });
+    revalidateMemberPages(memberId);
+    return { ok: true } as const;
+  } catch (error) {
+    const failure = editingFailure(error);
+    if (failure.code === "DUPLICATE_TELEGRAM") {
+      const conflict = await findMemberIdentityConflict({
+        excludeMemberId: memberId,
+        telegramUsername: newUsername,
+      }).catch(() => null);
+      return { ...failure, existingMemberId: conflict?.memberId } as const;
+    }
+    return failure;
+  }
+}
+
+export async function correctMembershipPeriodAction(input: {
+  memberId: string;
+  periodId: string;
+  expected: MembershipPeriodSnapshot;
+  proposed: MembershipPeriodDraft;
+  reason: string;
+}) {
+  await requireAdminSession();
+  let memberId: string;
+  let periodId: string;
+  let proposed: MembershipPeriodSnapshot;
+  let reason: string;
+  try {
+    memberId = typedUuid(input.memberId);
+    periodId = typedUuid(input.periodId);
+    proposed = membershipPeriodRpcState(validateMembershipPeriodDraft(input.proposed));
+    assertHasChanges(buildChangeSet(input.expected, proposed));
+    reason = validateReason(input.reason);
+  } catch {
+    return invalidEditingResult();
+  }
+  try {
+    await correctMembershipPeriod({
+      memberId,
+      periodId,
+      expected: input.expected,
+      proposed,
+      reason,
+      actorId: "vip-admin",
+    });
+    revalidateMemberPages(memberId);
+    return { ok: true } as const;
+  } catch (error) {
+    return editingFailure(error);
+  }
+}
+
+export async function correctPaymentAction(input: {
+  memberId: string;
+  paymentId: string;
+  expected: PaymentSnapshot;
+  proposed: PaymentDraft;
+  reason: string;
+}) {
+  await requireAdminSession();
+  let memberId: string;
+  let paymentId: string;
+  let proposed: PaymentSnapshot;
+  let reason: string;
+  try {
+    memberId = typedUuid(input.memberId);
+    paymentId = typedUuid(input.paymentId);
+    proposed = paymentRpcState(validatePaymentDraft(input.proposed));
+    assertHasChanges(buildChangeSet(input.expected, proposed));
+    reason = validateReason(input.reason);
+  } catch {
+    return invalidEditingResult();
+  }
+  try {
+    await correctPayment({
+      memberId,
+      paymentId,
+      expected: input.expected,
+      proposed,
+      reason,
+      actorId: "vip-admin",
+    });
+    revalidateMemberPages(memberId);
+    return { ok: true } as const;
+  } catch (error) {
+    return editingFailure(error);
+  }
+}
+
+export async function openReviewCaseAction(input: {
+  memberId: string;
+  membershipPeriodId?: string | null;
+  paymentId?: string | null;
+  category: string;
+  reason: string;
+}) {
+  await requireAdminSession();
+  let memberId: string;
+  let membershipPeriodId: string | null;
+  let paymentId: string | null;
+  let review;
+  try {
+    memberId = typedUuid(input.memberId);
+    membershipPeriodId = typedOptionalUuid(input.membershipPeriodId);
+    paymentId = typedOptionalUuid(input.paymentId);
+    if (membershipPeriodId && paymentId) throw new Error("Only one linked entity is allowed.");
+    review = validateReviewOpenDraft({ category: input.category, reason: input.reason });
+  } catch {
+    return invalidEditingResult();
+  }
+  try {
+    await openReviewCase({
+      memberId,
+      membershipPeriodId,
+      paymentId,
+      category: review.category,
+      reason: review.reason,
+      actorId: "vip-admin",
+    });
+    revalidateMemberPages(memberId);
+    return { ok: true } as const;
+  } catch (error) {
+    return editingFailure(error);
+  }
+}
+
+export async function resolveReviewCaseAction(input: {
+  caseId: string;
+  memberId: string;
+  outcome: string;
+  note: string;
+}) {
+  await requireAdminSession();
+  let caseId: string;
+  let memberId: string;
+  let resolution;
+  try {
+    caseId = typedUuid(input.caseId);
+    memberId = typedUuid(input.memberId);
+    resolution = validateReviewResolutionDraft({ outcome: input.outcome, note: input.note });
+  } catch {
+    return invalidEditingResult();
+  }
+  try {
+    await resolveReviewCase({
+      caseId,
+      memberId,
+      outcome: resolution.outcome,
+      note: resolution.note,
+      actorId: "vip-admin",
+    });
+    revalidateMemberPages(memberId);
+    return { ok: true } as const;
+  } catch (error) {
+    return editingFailure(error);
+  }
 }

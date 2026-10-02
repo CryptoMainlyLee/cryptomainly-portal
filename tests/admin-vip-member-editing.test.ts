@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   assertHasChanges,
   buildChangeSet,
+  editingActionFailureForCode,
+  editingRpcErrorCodeFromDetail,
   isoToLondonLocalDateTime,
   londonLocalDateTimeToIso,
   requiresStructuralReason,
@@ -246,4 +248,36 @@ test("membership and payment helpers reject protected provenance fields", () => 
     () => validatePaymentDraft({ ...payment, verifiedBy: "admin" } as never),
     /protected|unsupported/i
   );
+});
+
+test("editing RPC details map only known safe conflict codes", () => {
+  const codes = [
+    "STALE_PREVIEW",
+    "DUPLICATE_EMAIL",
+    "DUPLICATE_TELEGRAM",
+    "DUPLICATE_TX_HASH",
+    "OVERLAPPING_ENTITLEMENT",
+    "DUPLICATE_REVIEW_CASE",
+    "REVIEW_CASE_NOT_OPEN",
+    "INVALID_INPUT",
+  ] as const;
+  for (const code of codes) {
+    assert.equal(editingRpcErrorCodeFromDetail(`database detail: ${code}`), code);
+  }
+  assert.equal(editingRpcErrorCodeFromDetail("internal database detail that must stay private"), null);
+});
+
+test("editing action failures expose safe messages and fail closed for unknown errors", () => {
+  assert.deepEqual(editingActionFailureForCode("STALE_PREVIEW"), {
+    ok: false,
+    code: "STALE_PREVIEW",
+    message: "This record changed after you reviewed it. Refresh the member and review the current values again.",
+  });
+  assert.deepEqual(editingActionFailureForCode(null), {
+    ok: false,
+    code: "SERVER_ERROR",
+    message: "The change could not be saved. Nothing has been changed.",
+  });
+  assert.equal(editingActionFailureForCode("DUPLICATE_EMAIL").message.includes("existing member"), true);
+  assert.equal(editingActionFailureForCode("OVERLAPPING_ENTITLEMENT").message.includes("overlap"), true);
 });

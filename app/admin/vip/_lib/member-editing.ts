@@ -273,3 +273,39 @@ export function isoToLondonLocalDateTime(value: string | null): string {
   if (Number.isNaN(date.getTime())) throw new Error("Timestamp is invalid.");
   return londonWallTime(date);
 }
+
+export const EDITING_RPC_ERROR_CODES = [
+  "STALE_PREVIEW",
+  "DUPLICATE_EMAIL",
+  "DUPLICATE_TELEGRAM",
+  "DUPLICATE_TX_HASH",
+  "OVERLAPPING_ENTITLEMENT",
+  "DUPLICATE_REVIEW_CASE",
+  "REVIEW_CASE_NOT_OPEN",
+  "INVALID_INPUT",
+] as const;
+export type EditingRpcErrorCode = (typeof EDITING_RPC_ERROR_CODES)[number];
+export type EditingActionErrorCode = EditingRpcErrorCode | "SERVER_ERROR";
+
+export function editingRpcErrorCodeFromDetail(detail: string): EditingRpcErrorCode | null {
+  return EDITING_RPC_ERROR_CODES.find((code) => String(detail).includes(code)) ?? null;
+}
+
+export function editingActionFailureForCode(code: EditingRpcErrorCode | null): {
+  ok: false;
+  code: EditingActionErrorCode;
+  message: string;
+} {
+  if (!code) return { ok: false, code: "SERVER_ERROR", message: "The change could not be saved. Nothing has been changed." };
+  const messages: Record<EditingRpcErrorCode, string> = {
+    STALE_PREVIEW: "This record changed after you reviewed it. Refresh the member and review the current values again.",
+    DUPLICATE_EMAIL: "That email already belongs to an existing member. Nothing has been changed.",
+    DUPLICATE_TELEGRAM: "That Telegram username already belongs to an existing member. Nothing has been changed.",
+    DUPLICATE_TX_HASH: "That transaction hash is already recorded. Nothing has been changed.",
+    OVERLAPPING_ENTITLEMENT: "That membership correction would overlap another entitlement period. Nothing has been changed.",
+    DUPLICATE_REVIEW_CASE: "An open Review case already exists for that issue.",
+    REVIEW_CASE_NOT_OPEN: "That Review case is no longer open. Refresh the member before continuing.",
+    INVALID_INPUT: "The submitted change is invalid. Nothing has been changed.",
+  };
+  return { ok: false, code, message: messages[code] };
+}
