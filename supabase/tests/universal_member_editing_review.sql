@@ -269,3 +269,208 @@ begin
       )
   ) then raise exception 'Seeded Review case missing audit provenance'; end if;
 end $$;
+
+
+begin;
+
+do $$
+declare
+  v_member uuid;
+  v_other uuid;
+  v_stub_member uuid;
+  v_account uuid;
+  v_audit_before integer;
+  v_protected_before jsonb;
+  v_protected_after jsonb;
+  v_expected jsonb;
+  v_proposed jsonb;
+begin
+  if to_regprocedure('public.admin_update_member_details(uuid,jsonb,jsonb,text,text)') is null then
+    raise exception 'Missing admin_update_member_details RPC';
+  end if;
+  if to_regprocedure('public.admin_update_telegram_username(uuid,uuid,text,text,text,text)') is null then
+    raise exception 'Missing admin_update_telegram_username RPC';
+  end if;
+
+  insert into public.members(display_name,email,first_joined_on,admin_notes,marketing_status,source_system)
+  values ('Editing SQL Test','editing-old@example.com','2024-01-01','Original note','unknown','admin_manual')
+  returning id into v_member;
+  insert into public.members(display_name,email,marketing_status,source_system)
+  values ('Editing Duplicate','taken@example.com','unknown','admin_manual') returning id into v_other;
+  insert into public.members(display_name,marketing_status,source_system)
+  values ('Telegram Stub Test','unknown','admin_manual') returning id into v_stub_member;
+
+  v_expected := jsonb_build_object(
+    'display_name','Editing SQL Test','email','editing-old@example.com',
+    'first_joined_on','2024-01-01','admin_notes','Original note','marketing_status','unknown'
+  );
+  v_proposed := jsonb_build_object(
+    'display_name','  Editing   SQL Updated  ','email',' EDITING-NEW@EXAMPLE.COM ',
+    'first_joined_on','2024-01-01','admin_notes','Original note','marketing_status','unknown'
+  );
+  perform * from public.admin_update_member_details(v_member,v_expected,v_proposed,null,'sql-test');
+
+  if not exists (
+    select 1 from public.members m where m.id=v_member
+      and m.display_name='Editing SQL Updated' and m.email='editing-new@example.com'
+      and m.first_joined_on='2024-01-01'
+  ) then raise exception 'Member details were not normalized/saved'; end if;
+
+  if not exists (
+    select 1 from public.audit_log a
+    where a.action='MEMBER_DETAILS_UPDATED' and a.entity_type='member'
+      and a.entity_id=v_member::text
+      and a.before_data=jsonb_build_object('display_name','Editing SQL Test','email','editing-old@example.com')
+      and a.after_data=jsonb_build_object('display_name','Editing SQL Updated','email','editing-new@example.com')
+  ) then raise exception 'Member details changed-only audit invalid'; end if;
+
+  select count(*) into v_audit_before from public.audit_log
+  where action='MEMBER_DETAILS_UPDATED' and entity_id=v_member::text;
+
+  begin
+    perform * from public.admin_update_member_details(
+      v_member, v_expected,
+      jsonb_set(v_expected,'{display_name}',to_jsonb('Stale Change'::text)),
+      null,'sql-test'
+    );
+    raise exception 'Expected STALE_PREVIEW';
+  exception when others then
+    if sqlerrm <> 'STALE_PREVIEW' then raise; end if;
+  end;
+  if (select count(*) from public.audit_log where action='MEMBER_DETAILS_UPDATED' and entity_id=v_member::text) <> v_audit_before then
+    raise exception 'Stale member edit wrote an audit row';
+  end if;
+
+  v_expected := jsonb_build_object(
+    'display_name','Editing SQL Updated','email','editing-new@example.com',
+    'first_joined_on','2024-01-01','admin_notes','Original note','marketing_status','unknown'
+  );
+  v_proposed := jsonb_set(v_expected,'{first_joined_on}',to_jsonb('2024-01-02'::text));
+  begin
+    perform * from public.admin_update_member_details(v_member,v_expected,v_proposed,null,'sql-test');
+    raise exception 'Expected INVALID_INPUT for structural change without reason';
+  exception when others then
+    if sqlerrm <> 'INVALID_INPUT' then raise; end if;
+  end;
+  perform * from public.admin_update_member_details(v_member,v_expected,v_proposed,'Correct legacy join date','sql-test');
+
+  v_expected := jsonb_build_object(
+    'display_name','Editing SQL Updated','email','editing-new@example.com',
+    'first_joined_on','2024-01-02','admin_notes','Original note','marketing_status','unknown'
+  );
+  v_proposed := jsonb_set(v_expected,'{email}',to_jsonb(' TAKEN@EXAMPLE.COM '::text));
+  begin
+    perform * from public.admin_update_member_details(v_member,v_expected,v_proposed,null,'sql-test');
+    raise exception 'Expected DUPLICATE_EMAIL';
+  exception when others then
+    if sqlerrm <> 'DUPLICATE_EMAIL' then raise; end if;
+  end;
+  if (select email from public.members where id=v_member) <> 'editing-new@example.com' then
+    raise exception 'Duplicate email attempt changed member';
+  end if;
+
+  begin
+    perform * from public.admin_update_member_details(
+      v_member,
+      v_expected || jsonb_build_object('legacy_member_code','CM-X'),
+      v_expected,
+      null,'sql-test'
+    );
+    raise exception 'Expected INVALID_INPUT for unknown member JSON key';
+  exception when others then
+    if sqlerrm <> 'INVALID_INPUT' then raise; end if;
+  end;
+
+  insert into public.telegram_accounts(
+    member_id,telegram_user_id,telegram_username,telegram_raw,bot_started_at,linked_at,dm_available,last_verified_at
+  ) values (
+    v_member,111111,'old_name','@Old_Name','2026-01-01 10:00+00','2026-01-02 10:00+00',true,'2026-01-03 10:00+00'
+  ) returning id into v_account;
+
+  insert into public.telegram_accounts(member_id,telegram_username,dm_available)
+  values (v_other,'taken_name',false);
+
+  select to_jsonb(ta)-'telegram_username' into v_protected_before
+  from public.telegram_accounts ta where ta.id=v_account;
+
+  perform * from public.admin_update_telegram_username(
+    v_member,v_account,'old_name',' @New_Name ',null,'sql-test'
+  );
+
+  if (select telegram_username from public.telegram_accounts where id=v_account) <> 'new_name' then
+    raise exception 'Telegram username was not normalized/saved';
+  end if;
+  select to_jsonb(ta)-'telegram_username' into v_protected_after
+  from public.telegram_accounts ta where ta.id=v_account;
+  if v_protected_after is distinct from v_protected_before then
+    raise exception 'Telegram username edit changed protected identity/link fields';
+  end if;
+
+  if not exists (
+    select 1 from public.audit_log a
+    where a.action='TELEGRAM_USERNAME_UPDATED' and a.entity_type='telegram_account'
+      and a.entity_id=v_account::text
+      and a.before_data=jsonb_build_object('telegram_username','old_name')
+      and a.after_data=jsonb_build_object('telegram_username','new_name')
+  ) then raise exception 'Telegram username audit invalid'; end if;
+
+  begin
+    perform * from public.admin_update_telegram_username(
+      v_member,v_account,'new_name','@TAKEN_NAME',null,'sql-test'
+    );
+    raise exception 'Expected DUPLICATE_TELEGRAM';
+  exception when others then
+    if sqlerrm <> 'DUPLICATE_TELEGRAM' then raise; end if;
+  end;
+
+  begin
+    perform * from public.admin_update_telegram_username(
+      v_member,v_account,'old_name','another_name',null,'sql-test'
+    );
+    raise exception 'Expected STALE_PREVIEW for Telegram username';
+  exception when others then
+    if sqlerrm <> 'STALE_PREVIEW' then raise; end if;
+  end;
+
+  select telegram_account_id into v_account
+  from public.admin_update_telegram_username(
+    v_stub_member,null,null,'@stub_name',null,'sql-test'
+  );
+  if not exists (
+    select 1 from public.telegram_accounts ta
+    where ta.id=v_account and ta.member_id=v_stub_member and ta.telegram_username='stub_name'
+      and ta.telegram_user_id is null and ta.bot_started_at is null and ta.linked_at is null
+      and ta.dm_available=false and ta.last_verified_at is null
+  ) then raise exception 'Unlinked Telegram username stub is invalid'; end if;
+
+  begin
+    perform * from public.admin_update_telegram_username(
+      v_stub_member,null,null,'second_stub',null,'sql-test'
+    );
+    raise exception 'Expected STALE_PREVIEW when stub appeared after Preview';
+  exception when others then
+    if sqlerrm <> 'STALE_PREVIEW' then raise; end if;
+  end;
+end $$;
+
+rollback;
+
+do $$
+begin
+  if not has_function_privilege(
+    'service_role','public.admin_update_member_details(uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot update member details'; end if;
+  if not has_function_privilege(
+    'service_role','public.admin_update_telegram_username(uuid,uuid,text,text,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot update Telegram username'; end if;
+  if has_function_privilege(
+    'anon','public.admin_update_member_details(uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) or has_function_privilege(
+    'authenticated','public.admin_update_member_details(uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'Browser roles can update member details'; end if;
+  if has_function_privilege(
+    'anon','public.admin_update_telegram_username(uuid,uuid,text,text,text,text)','EXECUTE'
+  ) or has_function_privilege(
+    'authenticated','public.admin_update_telegram_username(uuid,uuid,text,text,text,text)','EXECUTE'
+  ) then raise exception 'Browser roles can update Telegram username'; end if;
+end $$;

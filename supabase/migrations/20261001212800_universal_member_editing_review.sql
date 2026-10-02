@@ -350,3 +350,266 @@ grant execute on function public.admin_open_member_review_case(uuid,uuid,uuid,te
   to service_role;
 grant execute on function public.admin_resolve_member_review_case(uuid,uuid,text,text,text)
   to service_role;
+
+
+create or replace function public.admin_update_member_details(
+  p_member_id uuid,
+  p_expected jsonb,
+  p_proposed jsonb,
+  p_reason text,
+  p_actor_id text
+) returns table(member_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_member public.members%rowtype;
+  v_display_name text;
+  v_email text;
+  v_first_joined_on date;
+  v_first_joined_text text;
+  v_admin_notes text;
+  v_marketing_status text;
+  v_reason text;
+  v_actor text;
+  v_before jsonb := '{}'::jsonb;
+  v_after jsonb := '{}'::jsonb;
+  v_event_id uuid;
+begin
+  if p_member_id is null or p_expected is null or p_proposed is null
+     or jsonb_typeof(p_expected)<>'object' or jsonb_typeof(p_proposed)<>'object' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if not (p_expected ?& array['display_name','email','first_joined_on','admin_notes','marketing_status'])
+     or not (p_proposed ?& array['display_name','email','first_joined_on','admin_notes','marketing_status'])
+     or (select count(*) from jsonb_object_keys(p_expected)) <> 5
+     or (select count(*) from jsonb_object_keys(p_proposed)) <> 5 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_display_name := regexp_replace(btrim(coalesce(p_proposed->>'display_name','')), '[[:space:]]+', ' ', 'g');
+  if v_display_name='' or char_length(v_display_name)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_email := nullif(lower(btrim(coalesce(p_proposed->>'email',''))),'');
+  if v_email is not null and (
+    char_length(v_email)>254 or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  v_first_joined_text := nullif(btrim(coalesce(p_proposed->>'first_joined_on','')),'');
+  if v_first_joined_text is not null then
+    if v_first_joined_text !~ '^\d{4}-\d{2}-\d{2}$' then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end if;
+    begin
+      v_first_joined_on := v_first_joined_text::date;
+    exception when others then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end;
+    if v_first_joined_on::text <> v_first_joined_text then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end if;
+  end if;
+
+  v_admin_notes := nullif(btrim(coalesce(p_proposed->>'admin_notes','')),'');
+  if v_admin_notes is not null and char_length(v_admin_notes)>4000 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_marketing_status := lower(btrim(coalesce(p_proposed->>'marketing_status','')));
+  if v_marketing_status not in ('unknown','allowed','opted_out') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_reason := nullif(btrim(coalesce(p_reason,'')),'');
+  if v_reason is not null and char_length(v_reason)>500 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if char_length(v_actor)>200 then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  -- Share Add Member's identity lock so create/edit duplicate checks cannot race.
+  perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
+
+  select m.* into v_member from public.members m where m.id=p_member_id for update;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if v_member.display_name is distinct from (p_expected->>'display_name')
+     or v_member.email is distinct from (p_expected->>'email')
+     or v_member.first_joined_on::text is distinct from (p_expected->>'first_joined_on')
+     or v_member.admin_notes is distinct from (p_expected->>'admin_notes')
+     or v_member.marketing_status is distinct from (p_expected->>'marketing_status') then
+    raise exception using errcode='P0001', message='STALE_PREVIEW';
+  end if;
+
+  if v_member.display_name is distinct from v_display_name then
+    v_before := v_before || jsonb_build_object('display_name',v_member.display_name);
+    v_after := v_after || jsonb_build_object('display_name',v_display_name);
+  end if;
+  if v_member.email is distinct from v_email then
+    v_before := v_before || jsonb_build_object('email',v_member.email);
+    v_after := v_after || jsonb_build_object('email',v_email);
+  end if;
+  if v_member.first_joined_on is distinct from v_first_joined_on then
+    v_before := v_before || jsonb_build_object('first_joined_on',v_member.first_joined_on);
+    v_after := v_after || jsonb_build_object('first_joined_on',v_first_joined_on);
+    if v_reason is null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+  if v_member.admin_notes is distinct from v_admin_notes then
+    v_before := v_before || jsonb_build_object('admin_notes',v_member.admin_notes);
+    v_after := v_after || jsonb_build_object('admin_notes',v_admin_notes);
+  end if;
+  if v_member.marketing_status is distinct from v_marketing_status then
+    v_before := v_before || jsonb_build_object('marketing_status',v_member.marketing_status);
+    v_after := v_after || jsonb_build_object('marketing_status',v_marketing_status);
+  end if;
+  if v_before='{}'::jsonb then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if v_email is not null and exists (
+    select 1 from public.members m
+    where m.id<>p_member_id and lower(btrim(coalesce(m.email,'')))=v_email
+  ) then raise exception using errcode='P0001', message='DUPLICATE_EMAIL'; end if;
+
+  update public.members
+  set display_name=v_display_name,
+      email=v_email,
+      first_joined_on=v_first_joined_on,
+      admin_notes=v_admin_notes,
+      marketing_status=v_marketing_status,
+      updated_at=now()
+  where id=p_member_id;
+
+  insert into public.membership_events(
+    member_id,event_type,reason,actor_type,actor_id,metadata
+  ) values (
+    p_member_id,'MEMBER_DETAILS_UPDATED',v_reason,'admin',v_actor,
+    jsonb_build_object('before',v_before,'after',v_after)
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'MEMBER_DETAILS_UPDATED','member',p_member_id::text,
+    v_before,v_after,v_reason
+  );
+
+  return query select p_member_id,v_event_id;
+end;
+$$;
+
+
+create or replace function public.admin_update_telegram_username(
+  p_member_id uuid,
+  p_telegram_account_id uuid,
+  p_expected_username text,
+  p_new_username text,
+  p_reason text,
+  p_actor_id text
+) returns table(telegram_account_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_account public.telegram_accounts%rowtype;
+  v_account_id uuid;
+  v_expected text;
+  v_current text;
+  v_new text;
+  v_reason text;
+  v_actor text;
+  v_event_id uuid;
+begin
+  if p_member_id is null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  v_expected := nullif(lower(regexp_replace(btrim(coalesce(p_expected_username,'')),'^@','')),'');
+  v_new := nullif(lower(regexp_replace(btrim(coalesce(p_new_username,'')),'^@','')),'');
+  if v_expected is not null and (
+    char_length(v_expected)<5 or char_length(v_expected)>32 or v_expected !~ '^[a-z0-9_]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  if v_new is not null and (
+    char_length(v_new)<5 or char_length(v_new)>32 or v_new !~ '^[a-z0-9_]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  v_reason := nullif(btrim(coalesce(p_reason,'')),'');
+  if v_reason is not null and char_length(v_reason)>500 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if char_length(v_actor)>200 then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
+  perform 1 from public.members m where m.id=p_member_id;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if p_telegram_account_id is not null then
+    select ta.* into v_account
+    from public.telegram_accounts ta
+    where ta.id=p_telegram_account_id and ta.member_id=p_member_id
+    for update;
+    if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    v_current := nullif(lower(regexp_replace(btrim(coalesce(v_account.telegram_username,'')),'^@','')),'');
+    if v_current is distinct from v_expected then
+      raise exception using errcode='P0001', message='STALE_PREVIEW';
+    end if;
+    if v_current is not distinct from v_new then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end if;
+    v_account_id := v_account.id;
+  else
+    if v_expected is not null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    if exists(select 1 from public.telegram_accounts ta where ta.member_id=p_member_id) then
+      raise exception using errcode='P0001', message='STALE_PREVIEW';
+    end if;
+    if v_new is null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  if v_new is not null and exists (
+    select 1 from public.telegram_accounts ta
+    where (v_account_id is null or ta.id<>v_account_id)
+      and nullif(lower(regexp_replace(btrim(coalesce(ta.telegram_username,'')),'^@','')),'')=v_new
+  ) then raise exception using errcode='P0001', message='DUPLICATE_TELEGRAM'; end if;
+
+  if v_account_id is null then
+    insert into public.telegram_accounts(
+      member_id,telegram_user_id,telegram_username,telegram_raw,
+      bot_started_at,linked_at,dm_available,last_verified_at
+    ) values (
+      p_member_id,null,v_new,null,null,null,false,null
+    ) returning id into v_account_id;
+  else
+    update public.telegram_accounts
+    set telegram_username=v_new
+    where id=v_account_id;
+  end if;
+
+  insert into public.membership_events(
+    member_id,event_type,reason,actor_type,actor_id,metadata
+  ) values (
+    p_member_id,'TELEGRAM_USERNAME_UPDATED',v_reason,'admin',v_actor,
+    jsonb_build_object(
+      'telegram_account_id',v_account_id,
+      'before',jsonb_build_object('telegram_username',v_current),
+      'after',jsonb_build_object('telegram_username',v_new)
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'TELEGRAM_USERNAME_UPDATED','telegram_account',v_account_id::text,
+    jsonb_build_object('telegram_username',v_current),
+    jsonb_build_object('telegram_username',v_new),v_reason
+  );
+
+  return query select v_account_id,v_event_id;
+end;
+$$;
+
+revoke all on function public.admin_update_member_details(uuid,jsonb,jsonb,text,text)
+  from public, anon, authenticated;
+revoke all on function public.admin_update_telegram_username(uuid,uuid,text,text,text,text)
+  from public, anon, authenticated;
+grant execute on function public.admin_update_member_details(uuid,jsonb,jsonb,text,text)
+  to service_role;
+grant execute on function public.admin_update_telegram_username(uuid,uuid,text,text,text,text)
+  to service_role;
