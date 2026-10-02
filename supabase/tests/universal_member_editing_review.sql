@@ -474,3 +474,233 @@ begin
     'authenticated','public.admin_update_telegram_username(uuid,uuid,text,text,text,text)','EXECUTE'
   ) then raise exception 'Browser roles can update Telegram username'; end if;
 end $$;
+
+
+begin;
+
+do $$
+declare
+  v_member uuid;
+  v_period_one uuid;
+  v_period_two uuid;
+  v_period_unknown uuid;
+  v_payment_one uuid;
+  v_payment_two uuid;
+  v_expected jsonb;
+  v_proposed jsonb;
+  v_period_snapshot jsonb;
+  v_verification_before jsonb;
+  v_verification_after jsonb;
+  v_switches_before jsonb;
+  v_switches_after jsonb;
+begin
+  if to_regprocedure('public.admin_correct_membership_period(uuid,uuid,jsonb,jsonb,text,text)') is null then
+    raise exception 'Missing admin_correct_membership_period RPC';
+  end if;
+  if to_regprocedure('public.admin_correct_payment(uuid,uuid,jsonb,jsonb,text,text)') is null then
+    raise exception 'Missing admin_correct_payment RPC';
+  end if;
+
+  select jsonb_object_agg(setting_key,setting_value order by setting_key) into v_switches_before
+  from public.system_settings where setting_key in (
+    'automatic_reminders_enabled','automatic_removals_enabled',
+    'campaign_sending_enabled','payment_auto_activation_enabled'
+  );
+
+  insert into public.members(display_name,marketing_status,source_system)
+  values ('Period Payment SQL Test','unknown','admin_manual') returning id into v_member;
+
+  insert into public.membership_periods(
+    member_id,entitlement_type,plan_name,source,starts_on,expires_on,expiry_mode,
+    removal_protected,protection_reason,ended_early_on,legacy_notes,admin_note
+  ) values (
+    v_member,'paid','Plan A','test-source','2026-01-01','2026-03-01','fixed',
+    false,null,null,'ORIGINAL LEGACY EVIDENCE','Old note'
+  ) returning id into v_period_one;
+
+  insert into public.membership_periods(
+    member_id,entitlement_type,plan_name,source,starts_on,expires_on,expiry_mode
+  ) values (
+    v_member,'paid','Plan B','test-source','2026-04-01','2026-06-01','fixed'
+  ) returning id into v_period_two;
+
+  insert into public.membership_periods(
+    member_id,entitlement_type,plan_name,source,starts_on,expires_on,expiry_mode,admin_note
+  ) values (
+    v_member,'paid','Legacy unknown','test-source',null,'2020-01-01','fixed','Unknown start'
+  ) returning id into v_period_unknown;
+
+  insert into public.payments(
+    member_id,membership_period_id,amount,currency,network,tx_hash,status,
+    verification_method,received_at,verified_at,verified_by,notes
+  ) values (
+    v_member,v_period_one,100,'USDT','ERC20','tx-original','verified',
+    'manual',null,'2026-01-05 12:00+00','original-admin','Original payment'
+  ) returning id into v_payment_one;
+
+  insert into public.payments(
+    member_id,membership_period_id,amount,currency,tx_hash,status,verification_method
+  ) values (
+    v_member,v_period_two,50,'USDT','tx-existing','verified','manual'
+  ) returning id into v_payment_two;
+
+  v_expected := jsonb_build_object(
+    'entitlement_type','paid','plan_name','Plan A','starts_on','2026-01-01',
+    'expires_on','2026-03-01','expiry_mode','fixed','removal_protected',false,
+    'protection_reason',null,'ended_early_on',null,'admin_note','Old note'
+  );
+  v_proposed := jsonb_build_object(
+    'entitlement_type','paid','plan_name','Plan A corrected','starts_on','2026-01-02',
+    'expires_on','2026-03-01','expiry_mode','fixed','removal_protected',false,
+    'protection_reason',null,'ended_early_on',null,'admin_note','Corrected note'
+  );
+  perform * from public.admin_correct_membership_period(
+    v_member,v_period_one,v_expected,v_proposed,'Correct legacy period details','sql-test'
+  );
+
+  if not exists (
+    select 1 from public.membership_periods mp where mp.id=v_period_one
+      and mp.plan_name='Plan A corrected' and mp.starts_on='2026-01-02'
+      and mp.admin_note='Corrected note' and mp.source='test-source'
+      and mp.legacy_notes='ORIGINAL LEGACY EVIDENCE'
+  ) then raise exception 'Period correction changed wrong fields/evidence'; end if;
+
+  if not exists (
+    select 1 from public.audit_log a
+    where a.action='MEMBERSHIP_PERIOD_CORRECTED' and a.entity_id=v_period_one::text
+      and a.before_data ? 'plan_name' and a.before_data ? 'starts_on' and a.before_data ? 'admin_note'
+      and not (a.before_data ? 'source') and not (a.before_data ? 'legacy_notes')
+  ) then raise exception 'Period changed-only audit invalid'; end if;
+
+  begin
+    perform * from public.admin_correct_membership_period(
+      v_member,v_period_one,v_expected,v_proposed,'Stale retry','sql-test'
+    );
+    raise exception 'Expected STALE_PREVIEW for period';
+  exception when others then
+    if sqlerrm <> 'STALE_PREVIEW' then raise; end if;
+  end;
+
+  v_expected := jsonb_build_object(
+    'entitlement_type','paid','plan_name','Plan A corrected','starts_on','2026-01-02',
+    'expires_on','2026-03-01','expiry_mode','fixed','removal_protected',false,
+    'protection_reason',null,'ended_early_on',null,'admin_note','Corrected note'
+  );
+  v_proposed := jsonb_set(v_expected,'{expires_on}',to_jsonb('2026-04-01'::text));
+  begin
+    perform * from public.admin_correct_membership_period(
+      v_member,v_period_one,v_expected,v_proposed,'Would overlap next period','sql-test'
+    );
+    raise exception 'Expected OVERLAPPING_ENTITLEMENT';
+  exception when others then
+    if sqlerrm <> 'OVERLAPPING_ENTITLEMENT' then raise; end if;
+  end;
+
+  v_expected := jsonb_build_object(
+    'entitlement_type','paid','plan_name','Legacy unknown','starts_on',null,
+    'expires_on','2020-01-01','expiry_mode','fixed','removal_protected',false,
+    'protection_reason',null,'ended_early_on',null,'admin_note','Unknown start'
+  );
+  v_proposed := jsonb_set(v_expected,'{admin_note}',to_jsonb('Reviewed; start still unknown'::text));
+  perform * from public.admin_correct_membership_period(
+    v_member,v_period_unknown,v_expected,v_proposed,'Document review without inventing start','sql-test'
+  );
+  if not exists (
+    select 1 from public.membership_periods mp where mp.id=v_period_unknown
+      and mp.starts_on is null and mp.admin_note='Reviewed; start still unknown'
+  ) then raise exception 'Unknown historical date was not preserved'; end if;
+
+  v_expected := jsonb_build_object(
+    'amount',100,'currency','USDT','network','ERC20','tx_hash','tx-original',
+    'status','verified','received_at',null,'notes','Original payment'
+  );
+  v_proposed := jsonb_build_object(
+    'amount',150,'currency','USDT','network','ERC20','tx_hash','tx-corrected',
+    'status','verified','received_at',null,'notes','Corrected payment amount'
+  );
+  select to_jsonb(mp) into v_period_snapshot from public.membership_periods mp where mp.id=v_period_one;
+  select jsonb_build_object(
+    'verification_method',p.verification_method,'verified_at',p.verified_at,'verified_by',p.verified_by
+  ) into v_verification_before from public.payments p where p.id=v_payment_one;
+
+  perform * from public.admin_correct_payment(
+    v_member,v_payment_one,v_expected,v_proposed,'Correct payment record','sql-test'
+  );
+  if not exists (
+    select 1 from public.payments p where p.id=v_payment_one
+      and p.amount=150 and p.tx_hash='tx-corrected' and p.received_at is null
+      and p.notes='Corrected payment amount'
+  ) then raise exception 'Payment correction invalid'; end if;
+
+  select jsonb_build_object(
+    'verification_method',p.verification_method,'verified_at',p.verified_at,'verified_by',p.verified_by
+  ) into v_verification_after from public.payments p where p.id=v_payment_one;
+  if v_verification_after is distinct from v_verification_before then
+    raise exception 'Payment correction changed verification provenance';
+  end if;
+  if (select to_jsonb(mp) from public.membership_periods mp where mp.id=v_period_one)
+       is distinct from v_period_snapshot then
+    raise exception 'Payment correction changed membership entitlement';
+  end if;
+
+  if not exists (
+    select 1 from public.audit_log a where a.action='PAYMENT_CORRECTED'
+      and a.entity_id=v_payment_one::text and a.before_data ? 'amount'
+      and a.before_data ? 'tx_hash' and a.before_data ? 'notes'
+      and not (a.before_data ? 'verification_method')
+  ) then raise exception 'Payment changed-only audit invalid'; end if;
+
+  begin
+    perform * from public.admin_correct_payment(
+      v_member,v_payment_one,v_expected,v_proposed,'Stale payment retry','sql-test'
+    );
+    raise exception 'Expected STALE_PREVIEW for payment';
+  exception when others then
+    if sqlerrm <> 'STALE_PREVIEW' then raise; end if;
+  end;
+
+  v_expected := jsonb_build_object(
+    'amount',150,'currency','USDT','network','ERC20','tx_hash','tx-corrected',
+    'status','verified','received_at',null,'notes','Corrected payment amount'
+  );
+  v_proposed := jsonb_set(v_expected,'{tx_hash}',to_jsonb('tx-existing'::text));
+  begin
+    perform * from public.admin_correct_payment(
+      v_member,v_payment_one,v_expected,v_proposed,'Test duplicate tx','sql-test'
+    );
+    raise exception 'Expected DUPLICATE_TX_HASH';
+  exception when others then
+    if sqlerrm <> 'DUPLICATE_TX_HASH' then raise; end if;
+  end;
+
+  select jsonb_object_agg(setting_key,setting_value order by setting_key) into v_switches_after
+  from public.system_settings where setting_key in (
+    'automatic_reminders_enabled','automatic_removals_enabled',
+    'campaign_sending_enabled','payment_auto_activation_enabled'
+  );
+  if v_switches_after is distinct from v_switches_before then
+    raise exception 'Editing RPCs changed automation safety switches';
+  end if;
+end $$;
+
+rollback;
+
+do $$
+begin
+  if not has_function_privilege(
+    'service_role','public.admin_correct_membership_period(uuid,uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot correct membership periods'; end if;
+  if not has_function_privilege(
+    'service_role','public.admin_correct_payment(uuid,uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot correct payments'; end if;
+  if has_function_privilege(
+    'anon','public.admin_correct_membership_period(uuid,uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) or has_function_privilege(
+    'authenticated','public.admin_correct_membership_period(uuid,uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'Browser roles can correct membership periods'; end if;
+  if has_function_privilege(
+    'anon','public.admin_correct_payment(uuid,uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) or has_function_privilege(
+    'authenticated','public.admin_correct_payment(uuid,uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'Browser roles can correct payments'; end if;
+end $$;

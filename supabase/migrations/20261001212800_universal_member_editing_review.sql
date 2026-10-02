@@ -613,3 +613,403 @@ grant execute on function public.admin_update_member_details(uuid,jsonb,jsonb,te
   to service_role;
 grant execute on function public.admin_update_telegram_username(uuid,uuid,text,text,text,text)
   to service_role;
+
+
+create or replace function public.admin_correct_membership_period(
+  p_member_id uuid,
+  p_period_id uuid,
+  p_expected jsonb,
+  p_proposed jsonb,
+  p_reason text,
+  p_actor_id text
+) returns table(membership_period_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_period public.membership_periods%rowtype;
+  v_current jsonb;
+  v_entitlement_type text;
+  v_plan_name text;
+  v_starts_on date;
+  v_expires_on date;
+  v_expiry_mode text;
+  v_removal_protected boolean;
+  v_protection_reason text;
+  v_ended_early_on date;
+  v_admin_note text;
+  v_reason text;
+  v_actor text;
+  v_before jsonb := '{}'::jsonb;
+  v_after jsonb := '{}'::jsonb;
+  v_interval_changed boolean := false;
+  v_event_id uuid;
+  v_text text;
+begin
+  if p_member_id is null or p_period_id is null or p_expected is null or p_proposed is null
+     or jsonb_typeof(p_expected)<>'object' or jsonb_typeof(p_proposed)<>'object' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if not (p_expected ?& array[
+    'entitlement_type','plan_name','starts_on','expires_on','expiry_mode',
+    'removal_protected','protection_reason','ended_early_on','admin_note'
+  ]) or not (p_proposed ?& array[
+    'entitlement_type','plan_name','starts_on','expires_on','expiry_mode',
+    'removal_protected','protection_reason','ended_early_on','admin_note'
+  ]) or (select count(*) from jsonb_object_keys(p_expected))<>9
+     or (select count(*) from jsonb_object_keys(p_proposed))<>9 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_reason := btrim(coalesce(p_reason,''));
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if v_reason='' or char_length(v_reason)>500 or char_length(v_actor)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  select mp.* into v_period from public.membership_periods mp
+  where mp.id=p_period_id and mp.member_id=p_member_id for update;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  v_current := jsonb_build_object(
+    'entitlement_type',v_period.entitlement_type,'plan_name',v_period.plan_name,
+    'starts_on',v_period.starts_on,'expires_on',v_period.expires_on,
+    'expiry_mode',v_period.expiry_mode,'removal_protected',v_period.removal_protected,
+    'protection_reason',v_period.protection_reason,'ended_early_on',v_period.ended_early_on,
+    'admin_note',v_period.admin_note
+  );
+  if v_current is distinct from p_expected then
+    raise exception using errcode='P0001', message='STALE_PREVIEW';
+  end if;
+
+  v_entitlement_type := lower(btrim(coalesce(p_proposed->>'entitlement_type','')));
+  if v_entitlement_type not in ('paid','complimentary','trial','lifetime','admin') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_plan_name := nullif(btrim(coalesce(p_proposed->>'plan_name','')),'');
+  if v_plan_name is not null and char_length(v_plan_name)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_expiry_mode := lower(btrim(coalesce(p_proposed->>'expiry_mode','')));
+  if v_expiry_mode not in ('fixed','lifetime','manual_no_expiry') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if jsonb_typeof(p_proposed->'removal_protected')<>'boolean' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_removal_protected := (p_proposed->>'removal_protected')::boolean;
+  v_protection_reason := nullif(btrim(coalesce(p_proposed->>'protection_reason','')),'');
+  if v_protection_reason is not null and char_length(v_protection_reason)>500 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_removal_protected and v_protection_reason is null then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  elsif not v_removal_protected then
+    v_protection_reason := null;
+  end if;
+  v_admin_note := nullif(btrim(coalesce(p_proposed->>'admin_note','')),'');
+  if v_admin_note is not null and char_length(v_admin_note)>4000 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_proposed->>'starts_on','')),'');
+  if v_text is not null then
+    if v_text !~ '^\d{4}-\d{2}-\d{2}$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_starts_on := v_text::date;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_starts_on::text<>v_text then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_proposed->>'expires_on','')),'');
+  if v_text is not null then
+    if v_text !~ '^\d{4}-\d{2}-\d{2}$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_expires_on := v_text::date;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_expires_on::text<>v_text then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_proposed->>'ended_early_on','')),'');
+  if v_text is not null then
+    if v_text !~ '^\d{4}-\d{2}-\d{2}$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_ended_early_on := v_text::date;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_ended_early_on::text<>v_text then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  if v_expiry_mode<>'fixed' and v_expires_on is not null then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_starts_on is not null and v_expires_on is not null and v_expires_on<=v_starts_on then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_ended_early_on is not null and v_starts_on is not null and v_ended_early_on<v_starts_on then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_ended_early_on is not null and v_expires_on is not null and v_ended_early_on>v_expires_on then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if v_period.entitlement_type is distinct from v_entitlement_type then
+    v_before:=v_before||jsonb_build_object('entitlement_type',v_period.entitlement_type);
+    v_after:=v_after||jsonb_build_object('entitlement_type',v_entitlement_type);
+  end if;
+  if v_period.plan_name is distinct from v_plan_name then
+    v_before:=v_before||jsonb_build_object('plan_name',v_period.plan_name);
+    v_after:=v_after||jsonb_build_object('plan_name',v_plan_name);
+  end if;
+  if v_period.starts_on is distinct from v_starts_on then
+    v_before:=v_before||jsonb_build_object('starts_on',v_period.starts_on);
+    v_after:=v_after||jsonb_build_object('starts_on',v_starts_on);
+    v_interval_changed:=true;
+  end if;
+  if v_period.expires_on is distinct from v_expires_on then
+    v_before:=v_before||jsonb_build_object('expires_on',v_period.expires_on);
+    v_after:=v_after||jsonb_build_object('expires_on',v_expires_on);
+    v_interval_changed:=true;
+  end if;
+  if v_period.expiry_mode is distinct from v_expiry_mode then
+    v_before:=v_before||jsonb_build_object('expiry_mode',v_period.expiry_mode);
+    v_after:=v_after||jsonb_build_object('expiry_mode',v_expiry_mode);
+    v_interval_changed:=true;
+  end if;
+  if v_period.removal_protected is distinct from v_removal_protected then
+    v_before:=v_before||jsonb_build_object('removal_protected',v_period.removal_protected);
+    v_after:=v_after||jsonb_build_object('removal_protected',v_removal_protected);
+  end if;
+  if v_period.protection_reason is distinct from v_protection_reason then
+    v_before:=v_before||jsonb_build_object('protection_reason',v_period.protection_reason);
+    v_after:=v_after||jsonb_build_object('protection_reason',v_protection_reason);
+  end if;
+  if v_period.ended_early_on is distinct from v_ended_early_on then
+    v_before:=v_before||jsonb_build_object('ended_early_on',v_period.ended_early_on);
+    v_after:=v_after||jsonb_build_object('ended_early_on',v_ended_early_on);
+    v_interval_changed:=true;
+  end if;
+  if v_period.admin_note is distinct from v_admin_note then
+    v_before:=v_before||jsonb_build_object('admin_note',v_period.admin_note);
+    v_after:=v_after||jsonb_build_object('admin_note',v_admin_note);
+  end if;
+
+  if v_before='{}'::jsonb then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if v_interval_changed and exists (
+    select 1 from public.membership_periods other
+    where other.member_id=p_member_id and other.id<>p_period_id
+      and coalesce(other.starts_on,'-infinity'::date)
+          <= coalesce(v_ended_early_on,v_expires_on,'infinity'::date)
+      and coalesce(other.ended_early_on,other.expires_on,'infinity'::date)
+          >= coalesce(v_starts_on,'-infinity'::date)
+  ) then raise exception using errcode='P0001', message='OVERLAPPING_ENTITLEMENT'; end if;
+
+  update public.membership_periods
+  set entitlement_type=v_entitlement_type,
+      plan_name=v_plan_name,
+      starts_on=v_starts_on,
+      expires_on=v_expires_on,
+      expiry_mode=v_expiry_mode,
+      removal_protected=v_removal_protected,
+      protection_reason=v_protection_reason,
+      ended_early_on=v_ended_early_on,
+      admin_note=v_admin_note,
+      note_updated_at=case when v_period.admin_note is distinct from v_admin_note then now() else note_updated_at end,
+      note_updated_by=case when v_period.admin_note is distinct from v_admin_note then v_actor else note_updated_by end
+  where id=p_period_id;
+
+  insert into public.membership_events(
+    member_id,membership_period_id,event_type,old_expiry,new_expiry,reason,
+    actor_type,actor_id,metadata
+  ) values (
+    p_member_id,p_period_id,'MEMBERSHIP_PERIOD_CORRECTED',
+    case when v_period.expires_on is distinct from v_expires_on then v_period.expires_on else null end,
+    case when v_period.expires_on is distinct from v_expires_on then v_expires_on else null end,
+    v_reason,'admin',v_actor,jsonb_build_object('before',v_before,'after',v_after)
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'MEMBERSHIP_PERIOD_CORRECTED','membership_period',p_period_id::text,
+    v_before,v_after,v_reason
+  );
+
+  return query select p_period_id,v_event_id;
+end;
+$$;
+
+
+create or replace function public.admin_correct_payment(
+  p_member_id uuid,
+  p_payment_id uuid,
+  p_expected jsonb,
+  p_proposed jsonb,
+  p_reason text,
+  p_actor_id text
+) returns table(payment_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_payment public.payments%rowtype;
+  v_amount numeric;
+  v_currency text;
+  v_network text;
+  v_tx_hash text;
+  v_status text;
+  v_received_at timestamptz;
+  v_expected_received_at timestamptz;
+  v_notes text;
+  v_reason text;
+  v_actor text;
+  v_before jsonb := '{}'::jsonb;
+  v_after jsonb := '{}'::jsonb;
+  v_event_id uuid;
+  v_text text;
+begin
+  if p_member_id is null or p_payment_id is null or p_expected is null or p_proposed is null
+     or jsonb_typeof(p_expected)<>'object' or jsonb_typeof(p_proposed)<>'object' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if not (p_expected ?& array['amount','currency','network','tx_hash','status','received_at','notes'])
+     or not (p_proposed ?& array['amount','currency','network','tx_hash','status','received_at','notes'])
+     or (select count(*) from jsonb_object_keys(p_expected))<>7
+     or (select count(*) from jsonb_object_keys(p_proposed))<>7 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_reason := btrim(coalesce(p_reason,''));
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if v_reason='' or char_length(v_reason)>500 or char_length(v_actor)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_expected->>'received_at','')),'');
+  if v_text is not null then
+    if v_text !~ '(Z|[+-]\d{2}:\d{2})$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_expected_received_at:=v_text::timestamptz;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+  end if;
+
+  select p.* into v_payment from public.payments p
+  where p.id=p_payment_id and p.member_id=p_member_id for update;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if (jsonb_typeof(p_expected->'amount') not in ('number','null'))
+     or (jsonb_build_object('value',v_payment.amount)->'value') is distinct from p_expected->'amount'
+     or v_payment.currency is distinct from p_expected->>'currency'
+     or v_payment.network is distinct from p_expected->>'network'
+     or v_payment.tx_hash is distinct from p_expected->>'tx_hash'
+     or v_payment.status is distinct from p_expected->>'status'
+     or v_payment.received_at is distinct from v_expected_received_at
+     or v_payment.notes is distinct from p_expected->>'notes' then
+    raise exception using errcode='P0001', message='STALE_PREVIEW';
+  end if;
+
+  if jsonb_typeof(p_proposed->'amount') not in ('number','null') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if jsonb_typeof(p_proposed->'amount')='number' then
+    begin v_amount:=(p_proposed->>'amount')::numeric;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_amount<=0 then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  v_currency:=nullif(upper(btrim(coalesce(p_proposed->>'currency',''))),'');
+  if v_currency is not null and (
+    char_length(v_currency)>12 or v_currency !~ '^[A-Z0-9_-]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  v_network:=nullif(btrim(coalesce(p_proposed->>'network','')),'');
+  if v_network is not null and char_length(v_network)>100 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_tx_hash:=nullif(btrim(coalesce(p_proposed->>'tx_hash','')),'');
+  if v_tx_hash is not null and char_length(v_tx_hash)>300 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_status:=lower(btrim(coalesce(p_proposed->>'status','')));
+  if v_status not in ('pending','verified','rejected','refunded') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_notes:=nullif(btrim(coalesce(p_proposed->>'notes','')),'');
+  if v_notes is not null and char_length(v_notes)>2000 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_text:=nullif(btrim(coalesce(p_proposed->>'received_at','')),'');
+  if v_text is not null then
+    if v_text !~ '(Z|[+-]\d{2}:\d{2})$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_received_at:=v_text::timestamptz;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+  end if;
+
+  if v_payment.amount is distinct from v_amount then
+    v_before:=v_before||jsonb_build_object('amount',v_payment.amount);
+    v_after:=v_after||jsonb_build_object('amount',v_amount);
+  end if;
+  if v_payment.currency is distinct from v_currency then
+    v_before:=v_before||jsonb_build_object('currency',v_payment.currency);
+    v_after:=v_after||jsonb_build_object('currency',v_currency);
+  end if;
+  if v_payment.network is distinct from v_network then
+    v_before:=v_before||jsonb_build_object('network',v_payment.network);
+    v_after:=v_after||jsonb_build_object('network',v_network);
+  end if;
+  if v_payment.tx_hash is distinct from v_tx_hash then
+    v_before:=v_before||jsonb_build_object('tx_hash',v_payment.tx_hash);
+    v_after:=v_after||jsonb_build_object('tx_hash',v_tx_hash);
+  end if;
+  if v_payment.status is distinct from v_status then
+    v_before:=v_before||jsonb_build_object('status',v_payment.status);
+    v_after:=v_after||jsonb_build_object('status',v_status);
+  end if;
+  if v_payment.received_at is distinct from v_received_at then
+    v_before:=v_before||jsonb_build_object('received_at',v_payment.received_at);
+    v_after:=v_after||jsonb_build_object('received_at',v_received_at);
+  end if;
+  if v_payment.notes is distinct from v_notes then
+    v_before:=v_before||jsonb_build_object('notes',v_payment.notes);
+    v_after:=v_after||jsonb_build_object('notes',v_notes);
+  end if;
+  if v_before='{}'::jsonb then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if v_tx_hash is not null and exists (
+    select 1 from public.payments p where p.id<>p_payment_id and p.tx_hash=v_tx_hash
+  ) then raise exception using errcode='P0001', message='DUPLICATE_TX_HASH'; end if;
+
+  begin
+    update public.payments
+    set amount=v_amount,currency=v_currency,network=v_network,tx_hash=v_tx_hash,
+        status=v_status,received_at=v_received_at,notes=v_notes
+    where id=p_payment_id;
+  exception when unique_violation then
+    raise exception using errcode='P0001', message='DUPLICATE_TX_HASH';
+  end;
+
+  insert into public.membership_events(
+    member_id,membership_period_id,event_type,reason,actor_type,actor_id,metadata
+  ) values (
+    p_member_id,v_payment.membership_period_id,'PAYMENT_CORRECTED',v_reason,
+    'admin',v_actor,jsonb_build_object('payment_id',p_payment_id,'before',v_before,'after',v_after)
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'PAYMENT_CORRECTED','payment',p_payment_id::text,
+    v_before,v_after,v_reason
+  );
+
+  return query select p_payment_id,v_event_id;
+end;
+$$;
+
+revoke all on function public.admin_correct_membership_period(uuid,uuid,jsonb,jsonb,text,text)
+  from public, anon, authenticated;
+revoke all on function public.admin_correct_payment(uuid,uuid,jsonb,jsonb,text,text)
+  from public, anon, authenticated;
+grant execute on function public.admin_correct_membership_period(uuid,uuid,jsonb,jsonb,text,text)
+  to service_role;
+grant execute on function public.admin_correct_payment(uuid,uuid,jsonb,jsonb,text,text)
+  to service_role;
