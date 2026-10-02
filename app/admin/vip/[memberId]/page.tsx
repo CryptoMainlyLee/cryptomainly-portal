@@ -16,6 +16,7 @@ import MemberDetailsEditor from "./MemberDetailsEditor";
 import TelegramUsernameEditor from "./TelegramUsernameEditor";
 import MembershipPeriodEditor from "./MembershipPeriodEditor";
 import PaymentEditor from "./PaymentEditor";
+import ReviewCasesPanel from "./ReviewCasesPanel";
 
 type Props = {
   params: { memberId: string };
@@ -168,7 +169,6 @@ export default async function MemberDetail({ params, searchParams }: Props) {
     getMemberTelegramAccounts(params.memberId),
     getMemberReviewCases(params.memberId),
   ]);
-  void reviewCases;
 
   if (!member) notFound();
 
@@ -200,9 +200,9 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs">
               {member.status}
             </span>
-            {member.migration_review ? (
+            {member.open_review_count > 0 ? (
               <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-300">
-                Migration review
+                {member.open_review_count} open Review case{member.open_review_count === 1 ? "" : "s"}
               </span>
             ) : null}
           </div>
@@ -315,6 +315,13 @@ export default async function MemberDetail({ params, searchParams }: Props) {
           latestHistoricalPeriodId={latestHistoricalPeriod?.membership_period_id ?? null}
           latestHistoricalExpiry={latestHistoricalPeriod?.expires_on ?? null}
           todayLondon={todayLondon}
+        />
+
+        <ReviewCasesPanel
+          member={member}
+          periods={periods}
+          payments={payments}
+          cases={reviewCases}
         />
 
         {member.admin_notes ? (

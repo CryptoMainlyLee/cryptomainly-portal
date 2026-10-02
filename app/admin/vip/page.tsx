@@ -48,7 +48,7 @@ function filterMembers(members: MemberOverview[], params: Props["searchParams"])
   return members.filter((member) => {
     if (status && status !== "ALL" && member.status !== status) return false;
     if (type && type !== "all" && member.entitlement_type !== type) return false;
-    if (review === "1" && !member.migration_review) return false;
+    if (review === "1" && member.open_review_count === 0) return false;
     if (query) {
       const haystack = [
         member.display_name,
@@ -82,7 +82,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
   const compActive = members.filter(
     (m) => m.status === "ACTIVE" && m.entitlement_type === "complimentary"
   ).length;
-  const review = members.filter((m) => m.migration_review).length;
+  const review = members.filter((m) => m.open_review_count > 0).length;
   const botLinked = members.filter(
     (m) => m.status === "ACTIVE" && m.telegram_user_id
   ).length;
@@ -92,7 +92,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
     ["Paid Active", paidActive, "Paid memberships"],
     ["Complimentary", compActive, "Current free access"],
     ["Former VIP", former, "Retained for CRM"],
-    ["Review Flags", review, "Legacy cleanup"],
+    ["Open Reviews", review, "Members requiring review"],
     ["Bot Linked", botLinked, "Active numeric Telegram IDs"],
   ] as const;
 
@@ -258,9 +258,17 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                         <span className="text-slate-500">Not linked</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      {member.migration_review ? (
-                        <span className="text-amber-300">Review</span>
+                    <td className="max-w-[280px] px-4 py-3">
+                      {member.open_review_count > 0 ? (
+                        <div>
+                          <div className="text-amber-300">
+                            {member.review_categories[0]?.replace(/_/g, " ") ?? "Review"}
+                            {member.open_review_count > 1 ? (
+                              <span className="ml-2 text-xs text-amber-200/70">+{member.open_review_count - 1} more</span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 line-clamp-2 text-xs text-slate-500">{member.review_reason ?? "Review required"}</div>
+                        </div>
                       ) : (
                         <span className="text-slate-600">—</span>
                       )}

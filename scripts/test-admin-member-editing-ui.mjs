@@ -39,3 +39,12 @@ assert.match(page, /getMemberPayments/);
 assert.match(page, /getMemberTelegramAccounts/);
 assert.match(page, /getMemberReviewCases/);
 console.log("PASS universal member editing UI wiring is present");
+
+const reviewPanel = readFileSync(new URL("ReviewCasesPanel.tsx", root), "utf8");
+assert.match(page, /ReviewCasesPanel/);
+assert.match(reviewPanel, /CORRECTED_DATA_UPDATED/);
+assert.match(reviewPanel, /EXISTING_DATA_CONFIRMED/);
+assert.match(reviewPanel, /HISTORICAL_DETAIL_UNKNOWN_ACCEPTED/);
+assert.match(reviewPanel, /Reviewed — historical detail unknown\/accepted/);
+assert.match(reviewPanel, /Mark In Review/);
+assert.match(reviewPanel, /detectReviewConcerns/);

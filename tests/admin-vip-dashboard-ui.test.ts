@@ -18,3 +18,18 @@ test("quick actions keep Add Member first and Clear filters last", () => {
   assert.ok(activeOnly < reviewQueue);
   assert.ok(reviewQueue < clearFilters);
 });
+
+test("Review queue uses open Review cases rather than migration flags", () => {
+  assert.match(source, /review === "1" && member\.open_review_count === 0/);
+  assert.match(source, /"Open Reviews"/);
+  assert.match(source, /open_review_count/);
+  assert.match(source, /review_categories/);
+  assert.match(source, /review_reason/);
+  assert.doesNotMatch(source, /review === "1" && !member\.migration_review/);
+});
+
+test("Review row can show one member with multiple open cases", () => {
+  assert.match(source, /\+\{member\.open_review_count - 1\} more/);
+  assert.match(source, /filtered\.map\(\(member\) =>/);
+  assert.match(source, /key=\{member\.member_id\}/);
+});
