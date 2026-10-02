@@ -16,7 +16,7 @@ type Props = {
 export const dynamic = "force-dynamic";
 
 function formatDate(value: string | null) {
-  if (!value) return "—";
+  if (!value) return "â€”";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -24,6 +24,15 @@ function formatDate(value: string | null) {
   }).format(new Date(`${value}T12:00:00Z`));
 }
 
+function formatReviewDate(value: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/London",
+  }).format(new Date(value));
+}
 function badgeClass(status: string) {
   if (status === "ACTIVE") {
     return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
@@ -108,7 +117,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
               VIP Membership Admin
             </h1>
             <p className="mt-2 text-sm text-slate-400">
-              Phase 2 • audited membership administration • live Supabase data
+              Phase 2 â€¢ audited membership administration â€¢ live Supabase data
             </p>
           </div>
 
@@ -140,7 +149,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
               <input
                 name="q"
                 defaultValue={searchParams?.q}
-                placeholder="Search member, Telegram, email…"
+                placeholder="Search member, Telegram, emailâ€¦"
                 className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-amber-400"
               />
 
@@ -268,9 +277,10 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                             ) : null}
                           </div>
                           <div className="mt-1 line-clamp-2 text-xs text-slate-500">{member.review_reason ?? "Review required"}</div>
+                          <div className="mt-1 text-[11px] text-slate-600">Opened {formatReviewDate(member.review_opened_at)}</div>
                         </div>
                       ) : (
-                        <span className="text-slate-600">—</span>
+                        <span className="text-slate-600">â€”</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -278,7 +288,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                         href={`/admin/vip/${member.member_id}`}
                         className="font-medium text-amber-300 hover:text-amber-200"
                       >
-                        View →
+                        View â†’
                       </Link>
                     </td>
                   </tr>

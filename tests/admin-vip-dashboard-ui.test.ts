@@ -33,3 +33,8 @@ test("Review row can show one member with multiple open cases", () => {
   assert.match(source, /filtered\.map\(\(member\) =>/);
   assert.match(source, /key=\{member\.member_id\}/);
 });
+
+test("Review rows show the earliest open date", () => {
+  assert.match(source, /member\.review_opened_at/);
+  assert.match(source, /Opened /);
+});
