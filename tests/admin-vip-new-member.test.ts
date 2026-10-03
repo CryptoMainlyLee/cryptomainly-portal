@@ -177,3 +177,28 @@ test("strong duplicate matches carry current or protected identity provenance", 
   assert.equal(blocked.safeguarding, "blocked");
   assert.equal(historical.matchSource, "protected_history");
 });
+
+
+test("hard-match result distinguishes Blocked, protected-history, and ordinary duplicates", async () => {
+  const api = await import("../app/admin/vip/_lib/new-member.ts");
+  const blocked = api.newMemberHardMatchFailure({
+    memberId: "blocked-member", displayName: "Blocked Member", field: "email",
+    matchSource: "current", safeguarding: "blocked",
+  });
+  assert.equal(blocked.code, "BLOCKED_MEMBER_MATCH");
+  assert.match(blocked.message, /no contact.*no membership\/group access/i);
+
+  const protectedMatch = api.newMemberHardMatchFailure({
+    memberId: "prior-member", displayName: "Prior Member", field: "telegram",
+    matchSource: "protected_history", safeguarding: "previously_blocked",
+  });
+  assert.equal(protectedMatch.code, "PROTECTED_MEMBER_MATCH");
+  assert.match(protectedMatch.message, /existing member record/i);
+
+  const ordinary = api.newMemberHardMatchFailure({
+    memberId: "ordinary", displayName: "Ordinary", field: "email",
+    matchSource: "current", safeguarding: null,
+  });
+  assert.equal(ordinary.code, "DUPLICATE_EMAIL");
+  assert.doesNotMatch(ordinary.message, /Blocked|safeguard/i);
+});

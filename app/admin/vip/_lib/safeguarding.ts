@@ -101,3 +101,31 @@ export function safeguardingDuplicateKind(
   }
   return null;
 }
+
+
+export type SafeguardingPolicyIdentity = {
+  member_id: string;
+  safeguarding_state_present: boolean;
+  is_blocked: boolean;
+  ever_blocked: boolean;
+};
+
+export function requireSafeguardingPolicy<T extends SafeguardingPolicyIdentity>(
+  memberId: string,
+  policies: T[]
+): T {
+  const policy = policies.find((candidate) => candidate.member_id === memberId);
+  if (!policy?.safeguarding_state_present) {
+    throw new Error("SAFEGUARDING_STATE_MISSING");
+  }
+  return policy;
+}
+
+export function safeguardingStateForPolicy(input: {
+  is_blocked: boolean;
+  ever_blocked: boolean;
+}): SafeguardingDuplicateState {
+  if (input.is_blocked) return "blocked";
+  if (input.ever_blocked) return "previously_blocked";
+  return null;
+}

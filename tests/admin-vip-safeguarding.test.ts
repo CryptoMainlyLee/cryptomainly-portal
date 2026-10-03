@@ -87,3 +87,32 @@ test("display-name similarity never becomes a safeguarding identity match", () =
   const api = domain();
   assert.equal(api.safeguardingDuplicateKind("display_name", "blocked"), null);
 });
+
+test("missing or invalid safeguarding policy fails closed", () => {
+  const api = domain();
+  const valid = {
+    member_id: "member-1",
+    safeguarding_state_present: true,
+    is_blocked: false,
+    ever_blocked: false,
+  };
+  assert.equal(api.requireSafeguardingPolicy("member-1", [valid]), valid);
+  assert.throws(
+    () => api.requireSafeguardingPolicy("member-2", [valid]),
+    /SAFEGUARDING_STATE_MISSING/
+  );
+  assert.throws(
+    () => api.requireSafeguardingPolicy("member-1", [{ ...valid, safeguarding_state_present: false }]),
+    /SAFEGUARDING_STATE_MISSING/
+  );
+});
+
+test("member policy maps to blocked, previously blocked, or ordinary duplicate state", () => {
+  const api = domain();
+  assert.equal(api.safeguardingStateForPolicy({ is_blocked: true, ever_blocked: true }), "blocked");
+  assert.equal(
+    api.safeguardingStateForPolicy({ is_blocked: false, ever_blocked: true }),
+    "previously_blocked"
+  );
+  assert.equal(api.safeguardingStateForPolicy({ is_blocked: false, ever_blocked: false }), null);
+});

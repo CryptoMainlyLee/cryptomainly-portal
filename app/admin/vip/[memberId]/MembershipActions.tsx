@@ -27,6 +27,8 @@ type Props = {
   latestHistoricalPeriodId: string | null;
   latestHistoricalExpiry: string | null;
   todayLondon: string;
+  isBlocked?: boolean;
+  accessRestorationRequired?: boolean;
 };
 
 type ActionKind = "change-expiry" | "add-time" | "renew";
@@ -121,6 +123,8 @@ export default function MembershipActions(props: Props) {
     entitlementType: props.entitlementType,
     expiryMode: props.expiryMode,
     expiresOn: props.currentExpiresOn,
+    isBlocked: Boolean(props.isBlocked),
+    accessRestorationRequired: Boolean(props.accessRestorationRequired),
   });
 
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);

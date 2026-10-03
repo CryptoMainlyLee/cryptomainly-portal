@@ -220,3 +220,23 @@ export function requiresSimilarNameAcknowledgement(
 ): boolean {
   return similarMatchCount > 0 && !acknowledged;
 }
+
+
+export function newMemberHardMatchFailure(match: NewMemberDuplicateMatch) {
+  if (match.safeguarding === "blocked") {
+    return {
+      code: "BLOCKED_MEMBER_MATCH" as const,
+      message: "This identity belongs to a Blocked member: no contact and no membership/group access. Use the existing member record; no new member was created.",
+    };
+  }
+  if (match.matchSource === "protected_history") {
+    return {
+      code: "PROTECTED_MEMBER_MATCH" as const,
+      message: "This identity is protected by safeguarding history. Use the existing member record; no new member was created.",
+    };
+  }
+  return {
+    code: match.field === "email" ? ("DUPLICATE_EMAIL" as const) : ("DUPLICATE_TELEGRAM" as const),
+    message: "This identity already belongs to an existing member. No new member was created.",
+  };
+}
