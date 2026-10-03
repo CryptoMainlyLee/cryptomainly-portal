@@ -108,7 +108,27 @@ export function getMembershipActionEligibility(input: {
   entitlementType: "paid" | "complimentary" | "trial" | "lifetime" | "admin" | null;
   expiryMode: "fixed" | "lifetime" | "manual_no_expiry" | null;
   expiresOn: string | null;
+  isBlocked: boolean;
+  accessRestorationRequired: boolean;
 }): ActionEligibility {
+  if (input.isBlocked) {
+    const reason = "Unavailable while this member is Blocked.";
+    return {
+      changeExpiry: { enabled: false, reason },
+      addTime: { enabled: false, reason },
+      renew: { enabled: false, mode: "unavailable", reason },
+    };
+  }
+
+  if (input.accessRestorationRequired) {
+    const reason = "Restore access before changing this active entitlement.";
+    return {
+      changeExpiry: { enabled: false, reason },
+      addTime: { enabled: false, reason },
+      renew: { enabled: false, mode: "unavailable", reason },
+    };
+  }
+
   if (input.status === "FORMER") {
     const canCorrectFixedExpiry = input.expiryMode === "fixed" && Boolean(input.expiresOn);
     return {

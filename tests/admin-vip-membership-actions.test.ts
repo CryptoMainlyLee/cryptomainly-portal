@@ -54,6 +54,8 @@ test("eligibility allows active paid fixed expiry actions", () => {
     entitlementType: "paid",
     expiryMode: "fixed",
     expiresOn: "2026-10-30",
+    isBlocked: false,
+    accessRestorationRequired: false,
   });
   assert.equal(result.changeExpiry.enabled, true);
   assert.equal(result.addTime.enabled, true);
@@ -66,6 +68,8 @@ test("eligibility blocks paid renew for active complimentary fixed expiry", () =
     entitlementType: "complimentary",
     expiryMode: "fixed",
     expiresOn: "2027-02-23",
+    isBlocked: false,
+    accessRestorationRequired: false,
   });
   assert.equal(result.changeExpiry.enabled, true);
   assert.equal(result.addTime.enabled, true);
@@ -79,6 +83,8 @@ test("eligibility disables fixed-date actions for lifetime/no-expiry", () => {
     entitlementType: "lifetime",
     expiryMode: "lifetime",
     expiresOn: null,
+    isBlocked: false,
+    accessRestorationRequired: false,
   });
   assert.equal(result.changeExpiry.enabled, false);
   assert.equal(result.addTime.enabled, false);
@@ -91,6 +97,8 @@ test("eligibility allows audited expiry correction for former fixed-expiry membe
     entitlementType: "paid",
     expiryMode: "fixed",
     expiresOn: "2026-06-01",
+    isBlocked: false,
+    accessRestorationRequired: false,
   });
   assert.equal(result.changeExpiry.enabled, true);
   assert.equal(result.addTime.enabled, false);
@@ -158,4 +166,47 @@ test("past-expiry confirmation stays disabled until acknowledgement", () => {
   assert.equal(canConfirmChangeExpiry(true, false), false);
   assert.equal(canConfirmChangeExpiry(true, true), true);
   assert.equal(canConfirmChangeExpiry(false, false), true);
+});
+
+
+test("Blocked disables every relationship membership action", () => {
+  const result = getMembershipActionEligibility({
+    status: "ACTIVE",
+    entitlementType: "paid",
+    expiryMode: "fixed",
+    expiresOn: "2026-10-30",
+    isBlocked: true,
+    accessRestorationRequired: false,
+  });
+  assert.equal(result.changeExpiry.enabled, false);
+  assert.equal(result.addTime.enabled, false);
+  assert.equal(result.renew.enabled, false);
+  assert.match(result.renew.reason ?? "", /Blocked/i);
+});
+
+test("restoration-required active entitlement cannot use ordinary relationship actions", () => {
+  const result = getMembershipActionEligibility({
+    status: "ACTIVE",
+    entitlementType: "paid",
+    expiryMode: "fixed",
+    expiresOn: "2026-10-30",
+    isBlocked: false,
+    accessRestorationRequired: true,
+  });
+  assert.equal(result.changeExpiry.enabled, false);
+  assert.equal(result.addTime.enabled, false);
+  assert.equal(result.renew.enabled, false);
+  assert.match(result.renew.reason ?? "", /Restore access/i);
+});
+
+test("unblocked former member remains eligible for deliberate reactivation", () => {
+  const result = getMembershipActionEligibility({
+    status: "FORMER",
+    entitlementType: "paid",
+    expiryMode: "fixed",
+    expiresOn: "2026-06-01",
+    isBlocked: false,
+    accessRestorationRequired: false,
+  });
+  assert.deepEqual(result.renew, { enabled: true, mode: "reactivation" });
 });

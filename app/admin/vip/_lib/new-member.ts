@@ -186,14 +186,26 @@ export function buildNewMemberPreview(input: NewMemberDraft): NewMemberPreview {
   };
 }
 
+export type NewMemberDuplicateMatch = {
+  memberId: string;
+  displayName: string;
+  field: "email" | "telegram";
+  matchSource: "current" | "protected_history";
+  safeguarding: "blocked" | "previously_blocked" | null;
+};
+
 export type NewMemberRpcErrorCode =
   | "INVALID_INPUT"
   | "DUPLICATE_EMAIL"
   | "DUPLICATE_TELEGRAM"
-  | "DUPLICATE_TX_HASH";
+  | "DUPLICATE_TX_HASH"
+  | "BLOCKED_MEMBER_MATCH"
+  | "PROTECTED_MEMBER_MATCH";
 
 export function newMemberRpcErrorCodeFromDetail(detail: string): NewMemberRpcErrorCode | null {
   const codes: NewMemberRpcErrorCode[] = [
+    "BLOCKED_MEMBER_MATCH",
+    "PROTECTED_MEMBER_MATCH",
     "DUPLICATE_EMAIL",
     "DUPLICATE_TELEGRAM",
     "DUPLICATE_TX_HASH",
@@ -207,4 +219,24 @@ export function requiresSimilarNameAcknowledgement(
   acknowledged: boolean
 ): boolean {
   return similarMatchCount > 0 && !acknowledged;
+}
+
+
+export function newMemberHardMatchFailure(match: NewMemberDuplicateMatch) {
+  if (match.safeguarding === "blocked") {
+    return {
+      code: "BLOCKED_MEMBER_MATCH" as const,
+      message: "This identity belongs to a Blocked member: no contact and no membership/group access. Use the existing member record; no new member was created.",
+    };
+  }
+  if (match.matchSource === "protected_history") {
+    return {
+      code: "PROTECTED_MEMBER_MATCH" as const,
+      message: "This identity is protected by safeguarding history. Use the existing member record; no new member was created.",
+    };
+  }
+  return {
+    code: match.field === "email" ? ("DUPLICATE_EMAIL" as const) : ("DUPLICATE_TELEGRAM" as const),
+    message: "This identity already belongs to an existing member. No new member was created.",
+  };
 }

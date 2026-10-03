@@ -1,15 +1,25 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { updateMembershipNoteAction } from "../actions";
 import { hasAdminSession } from "../_lib/auth";
 import {
   getMember,
   getMemberHistory,
+  getMemberPayments,
   getMemberPeriods,
+  getMemberReviewCases,
+  getMemberSafeguardingEvents,
+  getMemberSafeguardingTasks,
+  getMemberTelegramAccounts,
   type MemberHistory,
 } from "../_lib/data";
 import { membershipEventTitle } from "../_lib/membership-actions";
 import MembershipActions from "./MembershipActions";
+import SafeguardingPanel from "./SafeguardingPanel";
+import MemberDetailsEditor from "./MemberDetailsEditor";
+import TelegramUsernameEditor from "./TelegramUsernameEditor";
+import MembershipPeriodEditor from "./MembershipPeriodEditor";
+import PaymentEditor from "./PaymentEditor";
+import ReviewCasesPanel from "./ReviewCasesPanel";
 
 type Props = {
   params: { memberId: string };
@@ -154,10 +164,15 @@ export default async function MemberDetail({ params, searchParams }: Props) {
     redirect("/admin/vip/login");
   }
 
-  const [member, periods, history] = await Promise.all([
+  const [member, periods, history, payments, telegramAccounts, reviewCases, safeguardingEvents, safeguardingTasks] = await Promise.all([
     getMember(params.memberId),
     getMemberPeriods(params.memberId),
     getMemberHistory(params.memberId),
+    getMemberPayments(params.memberId),
+    getMemberTelegramAccounts(params.memberId),
+    getMemberReviewCases(params.memberId),
+    getMemberSafeguardingEvents(params.memberId),
+    getMemberSafeguardingTasks(params.memberId),
   ]);
 
   if (!member) notFound();
@@ -190,9 +205,9 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs">
               {member.status}
             </span>
-            {member.migration_review ? (
+            {member.open_review_count > 0 ? (
               <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-300">
-                Migration review
+                {member.open_review_count} open Review case{member.open_review_count === 1 ? "" : "s"}
               </span>
             ) : null}
           </div>
@@ -221,6 +236,21 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             {ACTION_ERROR[searchParams.actionError]}
           </div>
         ) : null}
+
+        <SafeguardingPanel
+          memberId={member.member_id}
+          safeguardingVersion={member.safeguarding_version}
+          isBlocked={member.is_blocked}
+          everBlocked={member.ever_blocked}
+          blockedAt={member.blocked_at}
+          blockedBy={member.blocked_by}
+          blockedSummary={member.blocked_summary}
+          lastUnblockedAt={member.last_unblocked_at}
+          lastUnblockedBy={member.last_unblocked_by}
+          accessRestorationRequired={member.effective_access_restoration_required}
+          events={safeguardingEvents}
+          tasks={safeguardingTasks}
+        />
 
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
@@ -269,6 +299,31 @@ export default async function MemberDetail({ params, searchParams }: Props) {
           </div>
         </section>
 
+        <MemberDetailsEditor
+          memberId={member.member_id}
+          displayName={member.display_name}
+          email={member.email}
+          firstJoinedOn={member.first_joined_on}
+          adminNotes={member.admin_notes}
+          marketingStatus={member.marketing_status}
+        />
+
+        <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-white">Telegram accounts</h2>
+              <p className="mt-1 text-xs text-slate-500">Username corrections never change verified numeric Telegram identity or link state.</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-4">
+            {telegramAccounts.length ? telegramAccounts.map((account) => (
+              <TelegramUsernameEditor key={account.telegram_account_id} memberId={member.member_id} account={account} />
+            )) : (
+              <TelegramUsernameEditor memberId={member.member_id} account={null} />
+            )}
+          </div>
+        </section>
+
         <MembershipActions
           memberId={member.member_id}
           status={member.status}
@@ -280,6 +335,15 @@ export default async function MemberDetail({ params, searchParams }: Props) {
           latestHistoricalPeriodId={latestHistoricalPeriod?.membership_period_id ?? null}
           latestHistoricalExpiry={latestHistoricalPeriod?.expires_on ?? null}
           todayLondon={todayLondon}
+          isBlocked={member.is_blocked}
+          accessRestorationRequired={member.effective_access_restoration_required}
+        />
+
+        <ReviewCasesPanel
+          member={member}
+          periods={periods}
+          payments={payments}
+          cases={reviewCases}
         />
 
         {member.admin_notes ? (
@@ -296,7 +360,7 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             <div>
               <h2 className="font-semibold text-white">Membership periods</h2>
               <p className="mt-1 text-xs text-slate-500">
-                Structured entitlement dates are changed only through the audited Membership Actions panel. Period notes remain editable.
+                Use Membership Actions for genuine renewals/time changes; use Edit period only to correct recorded data with an audited Preview.
               </p>
             </div>
             <span className="text-xs text-slate-500">
@@ -306,90 +370,27 @@ export default async function MemberDetail({ params, searchParams }: Props) {
 
           <div className="mt-4 space-y-4">
             {periods.map((period) => (
-              <div
+              <MembershipPeriodEditor
                 key={period.membership_period_id}
-                className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-slate-100">
-                        {formatDate(period.starts_on)} → {period.expiry_mode === "manual_no_expiry" || period.expiry_mode === "lifetime" ? "No expiry" : formatDate(period.expires_on)}
-                      </p>
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
-                          period.period_status === "CURRENT"
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                            : "border-slate-700 bg-slate-800/70 text-slate-400"
-                        }`}
-                      >
-                        {period.period_status}
-                      </span>
-                      {period.migration_review ? (
-                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
-                          Legacy review
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {titleCase(period.entitlement_type)} • {period.plan_name ?? "VIP membership"} • {titleCase(period.source)}
-                    </p>
-                  </div>
-
-                  {period.removal_protected ? (
-                    <span className="text-xs text-amber-300">Removal protected</span>
-                  ) : null}
-                </div>
-
-                {period.legacy_notes ? (
-                  <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                    <p className="text-[11px] uppercase tracking-wider text-slate-600">
-                      Legacy source note — read only
-                    </p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-400">
-                      {period.legacy_notes}
-                    </p>
-                  </div>
-                ) : null}
-
-                <form action={updateMembershipNoteAction} className="mt-4">
-                  <input type="hidden" name="memberId" value={member.member_id} />
-                  <input
-                    type="hidden"
-                    name="periodId"
-                    value={period.membership_period_id}
-                  />
-                  <label
-                    htmlFor={`note-${period.membership_period_id}`}
-                    className="text-[11px] font-medium uppercase tracking-wider text-slate-500"
-                  >
-                    Editable membership note
-                  </label>
-                  <textarea
-                    id={`note-${period.membership_period_id}`}
-                    name="note"
-                    rows={3}
-                    maxLength={4000}
-                    defaultValue={period.admin_note ?? ""}
-                    placeholder="Add useful context for this membership period…"
-                    className="mt-2 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-200 outline-none transition focus:border-amber-400"
-                  />
-                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs text-slate-600">
-                      {period.note_updated_at
-                        ? `Last updated ${formatDateTime(period.note_updated_at)} by ${period.note_updated_by ?? "vip-admin"}`
-                        : "No editable note saved yet."}
-                    </p>
-                    <button
-                      type="submit"
-                      className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-300 transition hover:bg-amber-400/20"
-                    >
-                      Save note
-                    </button>
-                  </div>
-                </form>
-              </div>
+                memberId={member.member_id}
+                period={period}
+              />
             ))}
+          </div>
+        </section>
+
+        <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-white">Payments</h2>
+              <p className="mt-1 text-xs text-slate-500">Payment corrections never change membership entitlement automatically.</p>
+            </div>
+            <span className="text-xs text-slate-500">{payments.length} payment{payments.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="mt-4 space-y-4">
+            {payments.length ? payments.map((payment) => (
+              <PaymentEditor key={payment.payment_id} memberId={member.member_id} payment={payment} />
+            )) : <p className="text-sm text-slate-500">No payment records.</p>}
           </div>
         </section>
 

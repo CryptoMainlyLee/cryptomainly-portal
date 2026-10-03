@@ -10,6 +10,7 @@ import {
   requiresSimilarNameAcknowledgement,
   validateNewMemberDraft,
   type NewMemberDraft,
+  type NewMemberDuplicateMatch,
 } from "../app/admin/vip/_lib/new-member.ts";
 
 function paidDraft(overrides: Partial<NewMemberDraft> = {}): NewMemberDraft {
@@ -150,4 +151,70 @@ test("requires acknowledgement only when similar names exist", () => {
   assert.equal(requiresSimilarNameAcknowledgement(1, false), true);
   assert.equal(requiresSimilarNameAcknowledgement(2, true), false);
   assert.equal(requiresSimilarNameAcknowledgement(0, false), false);
+});
+
+
+test("maps Blocked and protected-member Add Member RPC errors", () => {
+  assert.equal(newMemberRpcErrorCodeFromDetail("error BLOCKED_MEMBER_MATCH"), "BLOCKED_MEMBER_MATCH");
+  assert.equal(newMemberRpcErrorCodeFromDetail("error PROTECTED_MEMBER_MATCH"), "PROTECTED_MEMBER_MATCH");
+});
+
+test("strong duplicate matches carry current or protected identity provenance", () => {
+  const blocked: NewMemberDuplicateMatch = {
+    memberId: "blocked-member",
+    displayName: "Blocked Member",
+    field: "email",
+    matchSource: "current",
+    safeguarding: "blocked",
+  };
+  const historical: NewMemberDuplicateMatch = {
+    memberId: "prior-member",
+    displayName: "Prior Member",
+    field: "telegram",
+    matchSource: "protected_history",
+    safeguarding: "previously_blocked",
+  };
+  assert.equal(blocked.safeguarding, "blocked");
+  assert.equal(historical.matchSource, "protected_history");
+});
+
+
+test("hard-match result distinguishes Blocked, protected-history, and ordinary duplicates", async () => {
+  const api = await import("../app/admin/vip/_lib/new-member.ts");
+  const blocked = api.newMemberHardMatchFailure({
+    memberId: "blocked-member", displayName: "Blocked Member", field: "email",
+    matchSource: "current", safeguarding: "blocked",
+  });
+  assert.equal(blocked.code, "BLOCKED_MEMBER_MATCH");
+  assert.match(blocked.message, /no contact.*no membership\/group access/i);
+
+  const protectedMatch = api.newMemberHardMatchFailure({
+    memberId: "prior-member", displayName: "Prior Member", field: "telegram",
+    matchSource: "protected_history", safeguarding: "previously_blocked",
+  });
+  assert.equal(protectedMatch.code, "PROTECTED_MEMBER_MATCH");
+  assert.match(protectedMatch.message, /existing member record/i);
+
+  const ordinary = api.newMemberHardMatchFailure({
+    memberId: "ordinary", displayName: "Ordinary", field: "email",
+    matchSource: "current", safeguarding: null,
+  });
+  assert.equal(ordinary.code, "DUPLICATE_EMAIL");
+  assert.doesNotMatch(ordinary.message, /Blocked|safeguard/i);
+});
+
+
+test("Add Member hard-stop UI distinguishes Blocked and protected identities without override", async () => {
+  const { readFileSync } = await import("node:fs");
+  const form = readFileSync(
+    new URL("../app/admin/vip/new/AddMemberForm.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(form, /safeguarding: "blocked" \| "previously_blocked" \| null/);
+  assert.match(form, /Blocked member match/);
+  assert.match(form, /No new member can be created, reactivated or invited/);
+  assert.match(form, /Protected identity match/);
+  assert.match(form, /Use the existing canonical member record/);
+  assert.match(form, /href=\{`\/admin\/vip\/\$\{match\.memberId\}`\}/);
+  assert.doesNotMatch(form, /override.*Blocked|Blocked.*override/i);
 });

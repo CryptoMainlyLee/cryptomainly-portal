@@ -9,6 +9,7 @@ type Props = {
     status?: string;
     type?: string;
     review?: string;
+    blocked?: string;
     q?: string;
   };
 };
@@ -24,6 +25,15 @@ function formatDate(value: string | null) {
   }).format(new Date(`${value}T12:00:00Z`));
 }
 
+function formatReviewDate(value: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/London",
+  }).format(new Date(value));
+}
 function badgeClass(status: string) {
   if (status === "ACTIVE") {
     return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
@@ -43,12 +53,14 @@ function filterMembers(members: MemberOverview[], params: Props["searchParams"])
   const status = params?.status?.toUpperCase();
   const type = params?.type?.toLowerCase();
   const review = params?.review;
+  const blocked = params?.blocked;
   const query = params?.q?.trim().toLowerCase();
 
   return members.filter((member) => {
     if (status && status !== "ALL" && member.status !== status) return false;
     if (type && type !== "all" && member.entitlement_type !== type) return false;
-    if (review === "1" && !member.migration_review) return false;
+    if (review === "1" && member.open_review_count === 0) return false;
+    if (blocked === "1" && !member.is_blocked) return false;
     if (query) {
       const haystack = [
         member.display_name,
@@ -82,7 +94,8 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
   const compActive = members.filter(
     (m) => m.status === "ACTIVE" && m.entitlement_type === "complimentary"
   ).length;
-  const review = members.filter((m) => m.migration_review).length;
+  const review = members.filter((m) => m.open_review_count > 0).length;
+  const blockedCount = members.filter((m) => m.is_blocked).length;
   const botLinked = members.filter(
     (m) => m.status === "ACTIVE" && m.telegram_user_id
   ).length;
@@ -92,7 +105,8 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
     ["Paid Active", paidActive, "Paid memberships"],
     ["Complimentary", compActive, "Current free access"],
     ["Former VIP", former, "Retained for CRM"],
-    ["Review Flags", review, "Legacy cleanup"],
+    ["Open Reviews", review, "Members requiring review"],
+    ["Blocked", blockedCount, "Safeguarding restrictions"],
     ["Bot Linked", botLinked, "Active numeric Telegram IDs"],
   ] as const;
 
@@ -119,7 +133,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
           </form>
         </header>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
           {cards.map(([label, value, note]) => (
             <div
               key={label}
@@ -137,6 +151,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
         <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60">
           <div className="border-b border-slate-800 p-4">
             <form className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
+              {searchParams?.blocked === "1" ? <input type="hidden" name="blocked" value="1" /> : null}
               <input
                 name="q"
                 defaultValue={searchParams?.q}
@@ -193,6 +208,12 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                 Review queue
               </Link>
               <Link
+                href="/admin/vip?blocked=1"
+                className="rounded-full border border-rose-500/40 px-3 py-1.5 text-rose-300"
+              >
+                Blocked
+              </Link>
+              <Link
                 href="/admin/vip"
                 className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300"
               >
@@ -234,6 +255,17 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                       >
                         {member.status}
                       </span>
+                      {member.is_blocked ? (
+                        <div className="mt-1">
+                          <span className="inline-flex rounded-full border border-rose-400/60 bg-rose-500/20 px-2.5 py-1 text-[11px] font-bold tracking-wider text-rose-100">BLOCKED</span>
+                        </div>
+                      ) : null}
+                      {member.telegram_removal_required ? (
+                        <div className="mt-1 text-[11px] font-medium text-rose-300">Telegram removal required</div>
+                      ) : null}
+                      {member.effective_access_restoration_required ? (
+                        <div className="mt-1 text-[11px] font-medium text-violet-300">Access restoration required</div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-slate-300">
                       {typeLabel(member.entitlement_type)}
@@ -258,9 +290,18 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                         <span className="text-slate-500">Not linked</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      {member.migration_review ? (
-                        <span className="text-amber-300">Review</span>
+                    <td className="max-w-[280px] px-4 py-3">
+                      {member.open_review_count > 0 ? (
+                        <div>
+                          <div className="text-amber-300">
+                            {member.review_categories[0]?.replace(/_/g, " ") ?? "Review"}
+                            {member.open_review_count > 1 ? (
+                              <span className="ml-2 text-xs text-amber-200/70">+{member.open_review_count - 1} more</span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 line-clamp-2 text-xs text-slate-500">{member.review_reason ?? "Review required"}</div>
+                          <div className="mt-1 text-[11px] text-slate-600">Opened {formatReviewDate(member.review_opened_at)}</div>
+                        </div>
                       ) : (
                         <span className="text-slate-600">—</span>
                       )}

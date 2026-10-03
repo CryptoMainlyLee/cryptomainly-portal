@@ -12,7 +12,11 @@ import type { NewMemberDraft, NewMemberPreview } from "../_lib/new-member";
 
 type Props = { initialStartDate: string };
 type SimilarMatch = { memberId: string; displayName: string };
-type HardMatch = SimilarMatch & { field: "email" | "telegram" };
+type HardMatch = SimilarMatch & {
+  field: "email" | "telegram";
+  matchSource: "current" | "protected_history";
+  safeguarding: "blocked" | "previously_blocked" | null;
+};
 
 const inputClass =
   "mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none transition focus:border-amber-400";
@@ -72,6 +76,8 @@ export default function AddMemberForm({ initialStartDate }: Props) {
     }
   }, [draft.startDate, draft.durationValue, draft.durationUnit]);
 
+  const hasBlockedHardMatch = hardMatches.some((match) => match.safeguarding === "blocked");
+  const hasProtectedHardMatch = hardMatches.some((match) => match.matchSource === "protected_history");
   const finalExpiry = draft.manualExpiry.trim() || calculatedExpiry;
   const expiryOverridden = Boolean(
     draft.manualExpiry.trim() && calculatedExpiry && draft.manualExpiry.trim() !== calculatedExpiry
@@ -493,18 +499,29 @@ export default function AddMemberForm({ initialStartDate }: Props) {
 
       {hardMatches.length > 0 ? (
         <div className="mt-6 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
-          <p className="font-medium text-rose-200">Existing member match</p>
+          <p className="font-medium text-rose-200">
+            {hasBlockedHardMatch
+              ? "Blocked member match"
+              : hasProtectedHardMatch
+                ? "Protected identity match"
+                : "Existing member match"}
+          </p>
           <p className="mt-1 text-sm text-rose-100/80">
-            Do not create a duplicate. Open the existing record and renew/reactivate it if appropriate.
+            {hasBlockedHardMatch
+              ? "No new member can be created, reactivated or invited. Open the existing Blocked record and keep the safeguarding restriction in place."
+              : hasProtectedHardMatch
+                ? "Use the existing canonical member record. This identity is retained in safeguarding history; do not create a duplicate."
+                : "Do not create a duplicate. Open the existing record and renew/reactivate it if appropriate."}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {hardMatches.map((match) => (
               <Link
-                key={`${match.memberId}-${match.field}`}
+                key={`${match.memberId}-${match.field}-${match.matchSource}`}
                 href={`/admin/vip/${match.memberId}`}
                 className="rounded-lg border border-rose-400/30 px-3 py-1.5 text-sm text-rose-200 hover:bg-rose-400/10"
               >
                 {match.displayName} · {match.field}
+                {match.safeguarding === "blocked" ? " · BLOCKED" : ""}
               </Link>
             ))}
           </div>
