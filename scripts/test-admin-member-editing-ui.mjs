@@ -48,3 +48,11 @@ assert.match(reviewPanel, /HISTORICAL_DETAIL_UNKNOWN_ACCEPTED/);
 assert.match(reviewPanel, /Reviewed — historical detail unknown\/accepted/);
 assert.match(reviewPanel, /Mark In Review/);
 assert.match(reviewPanel, /detectReviewConcerns/);
+
+assert.match(page, /SafeguardingPanel/);
+assert.match(page, /getMemberSafeguardingEvents/);
+assert.match(page, /getMemberSafeguardingTasks/);
+assert.match(page, /MemberDetailsEditor/);
+assert.match(page, /TelegramUsernameEditor/);
+assert.match(page, /MembershipPeriodEditor/);
+assert.match(page, /PaymentEditor/);

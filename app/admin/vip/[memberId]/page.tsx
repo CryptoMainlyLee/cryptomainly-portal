@@ -7,11 +7,14 @@ import {
   getMemberPayments,
   getMemberPeriods,
   getMemberReviewCases,
+  getMemberSafeguardingEvents,
+  getMemberSafeguardingTasks,
   getMemberTelegramAccounts,
   type MemberHistory,
 } from "../_lib/data";
 import { membershipEventTitle } from "../_lib/membership-actions";
 import MembershipActions from "./MembershipActions";
+import SafeguardingPanel from "./SafeguardingPanel";
 import MemberDetailsEditor from "./MemberDetailsEditor";
 import TelegramUsernameEditor from "./TelegramUsernameEditor";
 import MembershipPeriodEditor from "./MembershipPeriodEditor";
@@ -161,13 +164,15 @@ export default async function MemberDetail({ params, searchParams }: Props) {
     redirect("/admin/vip/login");
   }
 
-  const [member, periods, history, payments, telegramAccounts, reviewCases] = await Promise.all([
+  const [member, periods, history, payments, telegramAccounts, reviewCases, safeguardingEvents, safeguardingTasks] = await Promise.all([
     getMember(params.memberId),
     getMemberPeriods(params.memberId),
     getMemberHistory(params.memberId),
     getMemberPayments(params.memberId),
     getMemberTelegramAccounts(params.memberId),
     getMemberReviewCases(params.memberId),
+    getMemberSafeguardingEvents(params.memberId),
+    getMemberSafeguardingTasks(params.memberId),
   ]);
 
   if (!member) notFound();
@@ -231,6 +236,21 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             {ACTION_ERROR[searchParams.actionError]}
           </div>
         ) : null}
+
+        <SafeguardingPanel
+          memberId={member.member_id}
+          safeguardingVersion={member.safeguarding_version}
+          isBlocked={member.is_blocked}
+          everBlocked={member.ever_blocked}
+          blockedAt={member.blocked_at}
+          blockedBy={member.blocked_by}
+          blockedSummary={member.blocked_summary}
+          lastUnblockedAt={member.last_unblocked_at}
+          lastUnblockedBy={member.last_unblocked_by}
+          accessRestorationRequired={member.effective_access_restoration_required}
+          events={safeguardingEvents}
+          tasks={safeguardingTasks}
+        />
 
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
@@ -315,6 +335,8 @@ export default async function MemberDetail({ params, searchParams }: Props) {
           latestHistoricalPeriodId={latestHistoricalPeriod?.membership_period_id ?? null}
           latestHistoricalExpiry={latestHistoricalPeriod?.expires_on ?? null}
           todayLondon={todayLondon}
+          isBlocked={member.is_blocked}
+          accessRestorationRequired={member.effective_access_restoration_required}
         />
 
         <ReviewCasesPanel

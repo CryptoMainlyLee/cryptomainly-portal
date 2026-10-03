@@ -27,8 +27,8 @@ type Props = {
   latestHistoricalPeriodId: string | null;
   latestHistoricalExpiry: string | null;
   todayLondon: string;
-  isBlocked?: boolean;
-  accessRestorationRequired?: boolean;
+  isBlocked: boolean;
+  accessRestorationRequired: boolean;
 };
 
 type ActionKind = "change-expiry" | "add-time" | "renew";
@@ -123,8 +123,8 @@ export default function MembershipActions(props: Props) {
     entitlementType: props.entitlementType,
     expiryMode: props.expiryMode,
     expiresOn: props.currentExpiresOn,
-    isBlocked: Boolean(props.isBlocked),
-    accessRestorationRequired: Boolean(props.accessRestorationRequired),
+    isBlocked: props.isBlocked,
+    accessRestorationRequired: props.accessRestorationRequired,
   });
 
   const [actionKind, setActionKind] = useState<ActionKind | null>(null);
@@ -257,6 +257,16 @@ export default function MembershipActions(props: Props) {
           Expiry remains authoritative
         </span>
       </div>
+
+      {props.isBlocked ? (
+        <p className="mt-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+          Unavailable while this member is Blocked.
+        </p>
+      ) : props.accessRestorationRequired ? (
+        <p className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/10 p-3 text-sm text-violet-200">
+          Restore access before changing this active entitlement.
+        </p>
+      ) : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <div>
