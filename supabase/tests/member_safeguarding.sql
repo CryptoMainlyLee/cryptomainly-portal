@@ -607,3 +607,324 @@ begin
     group by n.nspname having count(*)=4
   ) then raise exception 'Not all safeguarding tables have RLS enabled'; end if;
 end $$;
+
+-- Protected identity and Add Member enforcement regression.
+begin;
+
+do $$
+declare
+  v_blocked uuid;
+  v_prior uuid;
+  v_regular uuid;
+  v_same_name uuid;
+  v_primary uuid;
+  v_other uuid;
+  v_never uuid;
+  v_created uuid;
+  v_account uuid;
+  v_other_account uuid;
+  v_version bigint;
+  v_expected jsonb;
+  v_proposed jsonb;
+  v_telegram_before jsonb;
+  v_telegram_after jsonb;
+  v_capture_count integer;
+begin
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Blocked Identity','blocked-match@example.com','admin_manual','unknown')
+  returning id into v_blocked;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review
+  ) values (v_blocked,'paid','test','2019-01-01','2020-01-01','fixed',false);
+  insert into public.telegram_accounts(member_id,telegram_username,telegram_user_id,dm_available)
+  values (v_blocked,'blocked_user',111111111,false);
+  perform * from public.admin_block_member(
+    v_blocked,0,'Blocked duplicate fixture','Blocked identity must not be recreated',true,'sql-test'
+  );
+
+  begin
+    perform * from public.admin_create_member(
+      'Attempt Blocked Email','blocked-match@example.com',null,'complimentary',
+      '2026-01-01',1,'months','2026-02-01',null,'Duplicate safety test',
+      null,null,null,null,null,'sql-test'
+    );
+    raise exception 'Expected BLOCKED_MEMBER_MATCH for email';
+  exception when others then
+    if sqlerrm<>'BLOCKED_MEMBER_MATCH' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_create_member(
+      'Attempt Blocked Telegram','unique-blocked@example.com','blocked_user','complimentary',
+      '2026-01-01',1,'months','2026-02-01',null,'Duplicate safety test',
+      null,null,null,null,null,'sql-test'
+    );
+    raise exception 'Expected BLOCKED_MEMBER_MATCH for Telegram';
+  exception when others then
+    if sqlerrm<>'BLOCKED_MEMBER_MATCH' then raise; end if;
+  end;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Previously Blocked','prior-old@example.com','admin_manual','unknown')
+  returning id into v_prior;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review
+  ) values (v_prior,'paid','test','2019-01-01','2020-01-01','fixed',false);
+  insert into public.telegram_accounts(member_id,telegram_username,dm_available)
+  values (v_prior,'prior_old',false);
+  select safeguarding_version into v_version from public.admin_block_member(
+    v_prior,0,'Prior block','Capture historical identifiers',true,'sql-test'
+  );
+  perform * from public.admin_unblock_member(
+    v_prior,v_version,'Prior restriction lifted',true,'sql-test'
+  );
+
+  -- Make the protected values historical fixtures without using the editor under test.
+  update public.members set email='prior-current@example.com' where id=v_prior;
+  update public.telegram_accounts set telegram_username='prior_current' where member_id=v_prior;
+
+  begin
+    perform * from public.admin_create_member(
+      'Attempt Historical Email','prior-old@example.com',null,'complimentary',
+      '2026-01-01',1,'months','2026-02-01',null,'Protected history test',
+      null,null,null,null,null,'sql-test'
+    );
+    raise exception 'Expected PROTECTED_MEMBER_MATCH for historical email';
+  exception when others then
+    if sqlerrm<>'PROTECTED_MEMBER_MATCH' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_create_member(
+      'Attempt Historical Telegram','unique-prior@example.com','prior_old','complimentary',
+      '2026-01-01',1,'months','2026-02-01',null,'Protected history test',
+      null,null,null,null,null,'sql-test'
+    );
+    raise exception 'Expected PROTECTED_MEMBER_MATCH for historical Telegram';
+  exception when others then
+    if sqlerrm<>'PROTECTED_MEMBER_MATCH' then raise; end if;
+  end;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Ordinary Existing','ordinary-duplicate@example.com','admin_manual','unknown')
+  returning id into v_regular;
+  begin
+    perform * from public.admin_create_member(
+      'Attempt Ordinary Duplicate','ordinary-duplicate@example.com',null,'complimentary',
+      '2026-01-01',1,'months','2026-02-01',null,'Ordinary duplicate test',
+      null,null,null,null,null,'sql-test'
+    );
+    raise exception 'Expected DUPLICATE_EMAIL for ordinary member';
+  exception when others then
+    if sqlerrm<>'DUPLICATE_EMAIL' then raise; end if;
+  end;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Same Display Name','same-name-existing@example.com','admin_manual','unknown')
+  returning id into v_same_name;
+  select member_id into v_created from public.admin_create_member(
+    'Same Display Name','same-name-new@example.com',null,'complimentary',
+    '2026-01-01',1,'months','2026-02-01',null,'Name-only match is warning-only',
+    null,null,null,null,null,'sql-test'
+  );
+  if v_created is null or v_created=v_same_name then
+    raise exception 'Display-name-only match incorrectly hard-stopped Add Member';
+  end if;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Identity Primary','primary-old@example.com','admin_manual','unknown')
+  returning id into v_primary;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review
+  ) values (v_primary,'paid','test','2019-01-01','2020-01-01','fixed',false);
+  insert into public.telegram_accounts(
+    member_id,telegram_username,telegram_user_id,linked_at,dm_available,last_verified_at
+  ) values (
+    v_primary,'primary_old',333333333,now(),true,now()
+  ) returning id into v_account;
+  select safeguarding_version into v_version from public.admin_block_member(
+    v_primary,0,'Primary identity block','Identity continuity fixture',true,'sql-test'
+  );
+  perform * from public.admin_unblock_member(
+    v_primary,v_version,'Primary block lifted',true,'sql-test'
+  );
+
+  v_expected:=jsonb_build_object(
+    'display_name','Identity Primary','email','primary-old@example.com',
+    'first_joined_on',null,'admin_notes',null,'marketing_status','unknown'
+  );
+  v_proposed:=jsonb_set(v_expected,'{email}',to_jsonb('primary-new@example.com'::text));
+  perform * from public.admin_update_member_details(
+    v_primary,v_expected,v_proposed,'Correct current email','sql-test'
+  );
+  if not exists (
+    select 1 from public.member_protected_identifiers i
+    where i.member_id=v_primary and i.identifier_type='email'
+      and i.normalized_value='primary-old@example.com'
+  ) then raise exception 'Old Blocked email was not retained as protected'; end if;
+  if not exists (
+    select 1 from public.member_protected_identifiers i
+    where i.member_id=v_primary and i.identifier_type='email'
+      and i.normalized_value='primary-new@example.com'
+      and i.capture_source='identity_correction'
+  ) then raise exception 'New corrected email was not protected'; end if;
+  if not exists (
+    select 1 from public.member_safeguarding_events e
+    where e.member_id=v_primary and e.event_type='PROTECTED_IDENTIFIER_CAPTURED'
+      and e.metadata->>'identifier_type'='email'
+      and e.metadata->>'normalized_value'='primary-new@example.com'
+  ) then raise exception 'Email protected-identifier capture event missing'; end if;
+
+  v_expected:=v_proposed;
+  v_proposed:=jsonb_set(v_expected,'{email}',to_jsonb('primary-old@example.com'::text));
+  perform * from public.admin_update_member_details(
+    v_primary,v_expected,v_proposed,'Restore prior known email','sql-test'
+  );
+  if (select email from public.members where id=v_primary)<>'primary-old@example.com' then
+    raise exception 'Same-member historical protected email could not be restored';
+  end if;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Identity Other','other-old@example.com','admin_manual','unknown')
+  returning id into v_other;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review
+  ) values (v_other,'paid','test','2019-01-01','2020-01-01','fixed',false);
+  insert into public.telegram_accounts(
+    member_id,telegram_username,telegram_user_id,linked_at,dm_available,last_verified_at
+  ) values (
+    v_other,'other_old',444444444,now(),true,now()
+  ) returning id into v_other_account;
+  select safeguarding_version into v_version from public.admin_block_member(
+    v_other,0,'Other identity block','Cross-member protected conflict fixture',true,'sql-test'
+  );
+  perform * from public.admin_unblock_member(
+    v_other,v_version,'Other block lifted',true,'sql-test'
+  );
+
+  v_expected:=jsonb_build_object(
+    'display_name','Identity Other','email','other-old@example.com',
+    'first_joined_on',null,'admin_notes',null,'marketing_status','unknown'
+  );
+  v_proposed:=jsonb_set(v_expected,'{email}',to_jsonb('other-current@example.com'::text));
+  perform * from public.admin_update_member_details(
+    v_other,v_expected,v_proposed,'Correct other email','sql-test'
+  );
+
+  v_expected:=jsonb_build_object(
+    'display_name','Identity Primary','email','primary-old@example.com',
+    'first_joined_on',null,'admin_notes',null,'marketing_status','unknown'
+  );
+  v_proposed:=jsonb_set(v_expected,'{email}',to_jsonb('other-old@example.com'::text));
+  begin
+    perform * from public.admin_update_member_details(
+      v_primary,v_expected,v_proposed,'Attempt protected cross-member email','sql-test'
+    );
+    raise exception 'Expected PROTECTED_IDENTITY_CONFLICT for email correction';
+  exception when others then
+    if sqlerrm<>'PROTECTED_IDENTITY_CONFLICT' then raise; end if;
+  end;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Never Blocked','never-old@example.com','admin_manual','unknown')
+  returning id into v_never;
+  v_expected:=jsonb_build_object(
+    'display_name','Never Blocked','email','never-old@example.com',
+    'first_joined_on',null,'admin_notes',null,'marketing_status','unknown'
+  );
+  v_proposed:=jsonb_set(v_expected,'{email}',to_jsonb('never-new@example.com'::text));
+  perform * from public.admin_update_member_details(
+    v_never,v_expected,v_proposed,'Ordinary email correction','sql-test'
+  );
+  if exists(select 1 from public.member_protected_identifiers where member_id=v_never) then
+    raise exception 'Never-Blocked member acquired protected identity history';
+  end if;
+
+  select jsonb_build_object(
+    'telegram_user_id',ta.telegram_user_id,
+    'telegram_raw',ta.telegram_raw,
+    'bot_started_at',ta.bot_started_at,
+    'linked_at',ta.linked_at,
+    'dm_available',ta.dm_available,
+    'last_verified_at',ta.last_verified_at
+  ) into v_telegram_before
+  from public.telegram_accounts ta where ta.id=v_account;
+
+  perform * from public.admin_update_telegram_username(
+    v_primary,v_account,'primary_old','primary_new','Correct Telegram username','sql-test'
+  );
+  if not exists (
+    select 1 from public.member_protected_identifiers i
+    where i.member_id=v_primary and i.identifier_type='telegram_username'
+      and i.normalized_value='primary_new' and i.capture_source='identity_correction'
+  ) then raise exception 'New corrected Telegram username was not protected'; end if;
+  if not exists (
+    select 1 from public.member_safeguarding_events e
+    where e.member_id=v_primary and e.event_type='PROTECTED_IDENTIFIER_CAPTURED'
+      and e.metadata->>'identifier_type'='telegram_username'
+      and e.metadata->>'normalized_value'='primary_new'
+  ) then raise exception 'Telegram protected-identifier capture event missing'; end if;
+
+  select jsonb_build_object(
+    'telegram_user_id',ta.telegram_user_id,
+    'telegram_raw',ta.telegram_raw,
+    'bot_started_at',ta.bot_started_at,
+    'linked_at',ta.linked_at,
+    'dm_available',ta.dm_available,
+    'last_verified_at',ta.last_verified_at
+  ) into v_telegram_after
+  from public.telegram_accounts ta where ta.id=v_account;
+  if v_telegram_after is distinct from v_telegram_before then
+    raise exception 'Telegram username correction changed verified identity/link fields';
+  end if;
+
+  perform * from public.admin_update_telegram_username(
+    v_primary,v_account,'primary_new','primary_old','Restore prior Telegram username','sql-test'
+  );
+  if (select telegram_username from public.telegram_accounts where id=v_account)<>'primary_old' then
+    raise exception 'Same-member historical protected Telegram username could not be restored';
+  end if;
+
+  perform * from public.admin_update_telegram_username(
+    v_other,v_other_account,'other_old','other_current','Correct other Telegram username','sql-test'
+  );
+  begin
+    perform * from public.admin_update_telegram_username(
+      v_primary,v_account,'primary_old','other_old','Attempt protected cross-member Telegram','sql-test'
+    );
+    raise exception 'Expected PROTECTED_IDENTITY_CONFLICT for Telegram correction';
+  exception when others then
+    if sqlerrm<>'PROTECTED_IDENTITY_CONFLICT' then raise; end if;
+  end;
+
+  if not exists (
+    select 1 from public.member_protected_identifiers i
+    where i.member_id=v_primary and i.identifier_type='telegram_user_id'
+      and i.normalized_value='333333333'
+  ) then raise exception 'Initial Block did not retain numeric Telegram identity'; end if;
+  select count(*) into v_capture_count
+  from public.member_safeguarding_events e
+  where e.member_id=v_primary and e.event_type='PROTECTED_IDENTIFIER_CAPTURED';
+  if v_capture_count<2 then
+    raise exception 'Expected protected identity capture events were not appended';
+  end if;
+end $$;
+
+rollback;
+
+do $$
+begin
+  if not has_function_privilege(
+    'service_role','public.admin_create_member(text,text,text,text,date,integer,text,date,text,text,numeric,text,date,text,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot create safeguarded members'; end if;
+  if not has_function_privilege(
+    'service_role','public.admin_update_member_details(uuid,jsonb,jsonb,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot update safeguarded member details'; end if;
+  if not has_function_privilege(
+    'service_role','public.admin_update_telegram_username(uuid,uuid,text,text,text,text)','EXECUTE'
+  ) then raise exception 'service_role cannot update safeguarded Telegram username'; end if;
+
+  if has_function_privilege(
+    'anon','public.admin_create_member(text,text,text,text,date,integer,text,date,text,text,numeric,text,date,text,text,text)','EXECUTE'
+  ) or has_function_privilege(
+    'authenticated','public.admin_create_member(text,text,text,text,date,integer,text,date,text,text,numeric,text,date,text,text,text)','EXECUTE'
+  ) then raise exception 'Browser roles can create safeguarded members'; end if;
+end $$;

@@ -225,10 +225,14 @@ declare
   v_value text;
   v_actor text;
   v_owner uuid;
+  v_effective_event uuid;
+  v_identifier_id uuid;
+  v_capture_reason text;
 begin
   if p_identifier_type not in ('email','telegram_username','telegram_user_id')
      or p_capture_source not in ('block_snapshot','identity_correction','telegram_verified')
-     or p_member_id is null or p_event_id is null then
+     or p_member_id is null
+     or (p_capture_source='block_snapshot' and p_event_id is null) then
     raise exception using errcode='P0001', message='INVALID_INPUT';
   end if;
 
@@ -257,20 +261,41 @@ begin
     return;
   end if;
 
-  begin
-    insert into public.member_protected_identifiers(
-      member_id,identifier_type,normalized_value,capture_source,captured_by,safeguarding_event_id
+  v_effective_event:=p_event_id;
+  if p_capture_source<>'block_snapshot' then
+    v_capture_reason:=case p_capture_source
+      when 'telegram_verified' then 'Protected identity retained after verified Telegram linkage.'
+      else 'Protected identity retained after audited identity correction.'
+    end;
+    insert into public.member_safeguarding_events(
+      member_id,event_type,actor_id,reason,metadata
     ) values (
-      p_member_id,p_identifier_type,v_value,p_capture_source,v_actor,p_event_id
+      p_member_id,'PROTECTED_IDENTIFIER_CAPTURED',v_actor,v_capture_reason,
+      jsonb_build_object(
+        'identifier_type',p_identifier_type,'normalized_value',v_value,'capture_source',p_capture_source
+      )
+    ) returning id into v_effective_event;
+  end if;
+
+  insert into public.member_protected_identifiers(
+    member_id,identifier_type,normalized_value,capture_source,captured_by,safeguarding_event_id
+  ) values (
+    p_member_id,p_identifier_type,v_value,p_capture_source,v_actor,v_effective_event
+  ) returning id into v_identifier_id;
+
+  if p_capture_source<>'block_snapshot' and v_identifier_id is not null then
+    insert into public.audit_log(
+      actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+    ) values (
+      'admin',v_actor,'PROTECTED_IDENTIFIER_CAPTURED','member_protected_identifier',v_identifier_id::text,
+      null,
+      jsonb_build_object(
+        'member_id',p_member_id,'identifier_type',p_identifier_type,
+        'normalized_value',v_value,'capture_source',p_capture_source,
+        'safeguarding_event_id',v_effective_event
+      ),v_capture_reason
     );
-  exception when unique_violation then
-    select i.member_id into v_owner
-    from public.member_protected_identifiers i
-    where i.identifier_type=p_identifier_type and i.normalized_value=v_value;
-    if v_owner is distinct from p_member_id then
-      raise exception using errcode='P0001', message='PROTECTED_IDENTITY_CONFLICT';
-    end if;
-  end;
+  end if;
 end;
 $$;
 
@@ -734,3 +759,578 @@ revoke all on function public.admin_complete_safeguarding_task(uuid,uuid,text,te
   from public, anon, authenticated;
 grant execute on function public.admin_complete_safeguarding_task(uuid,uuid,text,text,text)
   to service_role;
+
+
+-- Safeguarding-aware replacements of existing admin identity RPCs.
+create or replace function public.admin_create_member(
+  p_display_name text,
+  p_email text,
+  p_telegram_username text,
+  p_entitlement_type text,
+  p_start_date date,
+  p_duration_value integer,
+  p_duration_unit text,
+  p_final_expiry date,
+  p_expiry_override_reason text,
+  p_reason text,
+  p_amount numeric,
+  p_currency text,
+  p_payment_date date,
+  p_tx_hash text,
+  p_payment_note text,
+  p_actor_id text
+) returns table(
+  member_id uuid,
+  membership_period_id uuid,
+  payment_id uuid,
+  telegram_account_id uuid,
+  event_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_display_name text;
+  v_email text;
+  v_telegram_username text;
+  v_entitlement_type text;
+  v_duration_unit text;
+  v_calculated_expiry date;
+  v_expiry_overridden boolean;
+  v_expiry_override_reason text;
+  v_reason text;
+  v_actor text;
+  v_currency text;
+  v_tx_hash text;
+  v_payment_note text;
+  v_member_id uuid;
+  v_period_id uuid;
+  v_payment_id uuid;
+  v_telegram_account_id uuid;
+  v_event_id uuid;
+begin
+  v_display_name := regexp_replace(btrim(coalesce(p_display_name, '')), '[[:space:]]+', ' ', 'g');
+  if v_display_name = '' or char_length(v_display_name) > 200 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_email := nullif(lower(btrim(coalesce(p_email, ''))), '');
+  if v_email is not null and (
+    char_length(v_email) > 254
+    or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
+  ) then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_telegram_username := nullif(
+    lower(regexp_replace(btrim(coalesce(p_telegram_username, '')), '^@', '')),
+    ''
+  );
+  if v_telegram_username is not null and (
+    char_length(v_telegram_username) < 5
+    or char_length(v_telegram_username) > 32
+    or v_telegram_username !~ '^[a-z0-9_]+$'
+  ) then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_entitlement_type := lower(btrim(coalesce(p_entitlement_type, '')));
+  if v_entitlement_type not in ('paid', 'complimentary', 'trial') then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  if p_start_date is null or p_duration_value is null or p_duration_value <= 0 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_duration_unit := lower(btrim(coalesce(p_duration_unit, '')));
+  if v_duration_unit not in ('days', 'months') then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_calculated_expiry := public.cm_add_membership_duration(
+    p_start_date, p_duration_value, v_duration_unit
+  );
+  if p_final_expiry is null or p_final_expiry <= p_start_date then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_expiry_overridden := p_final_expiry <> v_calculated_expiry;
+  v_expiry_override_reason := nullif(btrim(coalesce(p_expiry_override_reason, '')), '');
+  if v_expiry_overridden then
+    if v_expiry_override_reason is null or char_length(v_expiry_override_reason) > 500 then
+      raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+    end if;
+  else
+    v_expiry_override_reason := null;
+  end if;
+
+  v_reason := btrim(coalesce(p_reason, ''));
+  if v_reason = '' or char_length(v_reason) > 500 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
+
+  v_currency := nullif(upper(btrim(coalesce(p_currency, ''))), '');
+  v_tx_hash := nullif(btrim(coalesce(p_tx_hash, '')), '');
+  v_payment_note := nullif(btrim(coalesce(p_payment_note, '')), '');
+
+  if v_entitlement_type = 'paid' then
+    if p_amount is null or p_amount <= 0
+       or v_currency is null
+       or char_length(v_currency) > 12
+       or v_currency !~ '^[A-Z0-9_-]+$'
+       or (v_tx_hash is not null and char_length(v_tx_hash) > 300)
+       or (v_payment_note is not null and char_length(v_payment_note) > 2000) then
+      raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+    end if;
+  else
+    if p_amount is not null
+       or v_currency is not null
+       or p_payment_date is not null
+       or v_tx_hash is not null
+       or v_payment_note is not null then
+      raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+    end if;
+  end if;
+
+  -- Serialize this low-volume admin operation so two concurrent creates cannot both
+  -- pass the duplicate checks inside this RPC.
+  perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
+
+  if v_email is not null and exists (
+    select 1 from public.members m
+    join public.member_safeguarding_state ss on ss.member_id=m.id
+    where lower(btrim(coalesce(m.email,'')))=v_email and ss.is_blocked
+  ) then raise exception using errcode='P0001', message='BLOCKED_MEMBER_MATCH'; end if;
+  if v_email is not null and exists (
+    select 1 from public.member_protected_identifiers i
+    join public.member_safeguarding_state ss on ss.member_id=i.member_id
+    where i.identifier_type='email' and i.normalized_value=v_email and ss.is_blocked
+  ) then raise exception using errcode='P0001', message='BLOCKED_MEMBER_MATCH'; end if;
+  if v_email is not null and exists (
+    select 1 from public.member_protected_identifiers i
+    where i.identifier_type='email' and i.normalized_value=v_email
+  ) then raise exception using errcode='P0001', message='PROTECTED_MEMBER_MATCH'; end if;
+  if v_email is not null and exists (
+    select 1 from public.members m where lower(btrim(coalesce(m.email,'')))=v_email
+  ) then raise exception using errcode='P0001', message='DUPLICATE_EMAIL'; end if;
+
+  if v_telegram_username is not null and exists (
+    select 1 from public.telegram_accounts ta
+    join public.member_safeguarding_state ss on ss.member_id=ta.member_id
+    where lower(regexp_replace(btrim(coalesce(ta.telegram_username,'')),'^@',''))=v_telegram_username
+      and ss.is_blocked
+  ) then raise exception using errcode='P0001', message='BLOCKED_MEMBER_MATCH'; end if;
+  if v_telegram_username is not null and exists (
+    select 1 from public.member_protected_identifiers i
+    join public.member_safeguarding_state ss on ss.member_id=i.member_id
+    where i.identifier_type='telegram_username' and i.normalized_value=v_telegram_username
+      and ss.is_blocked
+  ) then raise exception using errcode='P0001', message='BLOCKED_MEMBER_MATCH'; end if;
+  if v_telegram_username is not null and exists (
+    select 1 from public.member_protected_identifiers i
+    where i.identifier_type='telegram_username' and i.normalized_value=v_telegram_username
+  ) then raise exception using errcode='P0001', message='PROTECTED_MEMBER_MATCH'; end if;
+  if v_telegram_username is not null and exists (
+    select 1 from public.telegram_accounts ta
+    where lower(regexp_replace(btrim(coalesce(ta.telegram_username,'')),'^@',''))=v_telegram_username
+  ) then raise exception using errcode='P0001', message='DUPLICATE_TELEGRAM'; end if;
+
+  if v_tx_hash is not null and exists (
+    select 1 from public.payments p where p.tx_hash = v_tx_hash
+  ) then
+    raise exception using errcode = 'P0001', message = 'DUPLICATE_TX_HASH';
+  end if;
+
+  insert into public.members (
+    display_name, email, first_joined_on, marketing_status, source_system
+  ) values (
+    v_display_name, v_email, p_start_date, 'unknown', 'admin_manual'
+  ) returning id into v_member_id;
+
+  insert into public.membership_periods (
+    member_id, entitlement_type, source, starts_on, expires_on,
+    expiry_mode, removal_protected, migration_review, admin_note
+  ) values (
+    v_member_id, v_entitlement_type, 'phase2_admin_create', p_start_date, p_final_expiry,
+    'fixed', false, false, v_reason
+  ) returning id into v_period_id;
+
+  if v_telegram_username is not null then
+    insert into public.telegram_accounts (
+      member_id, telegram_username, telegram_user_id, bot_started_at,
+      linked_at, dm_available, last_verified_at
+    ) values (
+      v_member_id, v_telegram_username, null, null, null, false, null
+    ) returning id into v_telegram_account_id;
+  end if;
+
+  if v_entitlement_type = 'paid' then
+    begin
+      insert into public.payments (
+        member_id, membership_period_id, amount, currency, tx_hash,
+        status, verification_method, received_at, verified_at, verified_by, notes
+      ) values (
+        v_member_id,
+        v_period_id,
+        p_amount,
+        v_currency,
+        v_tx_hash,
+        'verified',
+        'manual',
+        case
+          when p_payment_date is null then null
+          else ((p_payment_date::timestamp + time '12:00') at time zone 'Europe/London')
+        end,
+        now(),
+        v_actor,
+        v_payment_note
+      ) returning id into v_payment_id;
+    exception when unique_violation then
+      raise exception using errcode = 'P0001', message = 'DUPLICATE_TX_HASH';
+    end;
+  end if;
+
+  insert into public.membership_events (
+    member_id, membership_period_id, event_type, old_expiry, new_expiry,
+    adjustment_value, adjustment_unit, reason, actor_type, actor_id, metadata
+  ) values (
+    v_member_id, v_period_id, 'MEMBER_CREATED', null, p_final_expiry,
+    p_duration_value, v_duration_unit, v_reason, 'admin', v_actor,
+    jsonb_build_object(
+      'entitlement_type', v_entitlement_type,
+      'start_date', p_start_date,
+      'duration_value', p_duration_value,
+      'duration_unit', v_duration_unit,
+      'calculated_expiry', v_calculated_expiry,
+      'final_expiry', p_final_expiry,
+      'expiry_overridden', v_expiry_overridden,
+      'expiry_override_reason', v_expiry_override_reason,
+      'payment_id', v_payment_id,
+      'amount', p_amount,
+      'currency', v_currency,
+      'payment_date', p_payment_date,
+      'tx_hash', v_tx_hash,
+      'telegram_account_id', v_telegram_account_id,
+      'telegram_username', v_telegram_username,
+      'telegram_linked', false
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log (
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'MEMBER_CREATED', 'member', v_member_id::text,
+    null,
+    jsonb_build_object(
+      'member_id', v_member_id,
+      'membership_period_id', v_period_id,
+      'payment_id', v_payment_id,
+      'telegram_account_id', v_telegram_account_id,
+      'display_name', v_display_name,
+      'email', v_email,
+      'telegram_username', v_telegram_username,
+      'telegram_linked', false,
+      'entitlement_type', v_entitlement_type,
+      'start_date', p_start_date,
+      'duration_value', p_duration_value,
+      'duration_unit', v_duration_unit,
+      'calculated_expiry', v_calculated_expiry,
+      'final_expiry', p_final_expiry,
+      'expiry_overridden', v_expiry_overridden,
+      'expiry_override_reason', v_expiry_override_reason,
+      'amount', p_amount,
+      'currency', v_currency,
+      'payment_date', p_payment_date,
+      'tx_hash', v_tx_hash
+    ),
+    v_reason
+  );
+
+  return query select
+    v_member_id,
+    v_period_id,
+    v_payment_id,
+    v_telegram_account_id,
+    v_event_id;
+end;
+$$;
+
+create or replace function public.admin_update_member_details(
+  p_member_id uuid,
+  p_expected jsonb,
+  p_proposed jsonb,
+  p_reason text,
+  p_actor_id text
+) returns table(member_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_member public.members%rowtype;
+  v_display_name text;
+  v_email text;
+  v_first_joined_on date;
+  v_first_joined_text text;
+  v_admin_notes text;
+  v_marketing_status text;
+  v_reason text;
+  v_actor text;
+  v_before jsonb := '{}'::jsonb;
+  v_after jsonb := '{}'::jsonb;
+  v_event_id uuid;
+  v_ever_blocked boolean;
+begin
+  if p_member_id is null or p_expected is null or p_proposed is null
+     or jsonb_typeof(p_expected)<>'object' or jsonb_typeof(p_proposed)<>'object' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if not (p_expected ?& array['display_name','email','first_joined_on','admin_notes','marketing_status'])
+     or not (p_proposed ?& array['display_name','email','first_joined_on','admin_notes','marketing_status'])
+     or (select count(*) from jsonb_object_keys(p_expected)) <> 5
+     or (select count(*) from jsonb_object_keys(p_proposed)) <> 5 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_display_name := regexp_replace(btrim(coalesce(p_proposed->>'display_name','')), '[[:space:]]+', ' ', 'g');
+  if v_display_name='' or char_length(v_display_name)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_email := nullif(lower(btrim(coalesce(p_proposed->>'email',''))),'');
+  if v_email is not null and (
+    char_length(v_email)>254 or v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  v_first_joined_text := nullif(btrim(coalesce(p_proposed->>'first_joined_on','')),'');
+  if v_first_joined_text is not null then
+    if v_first_joined_text !~ '^\d{4}-\d{2}-\d{2}$' then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end if;
+    begin
+      v_first_joined_on := v_first_joined_text::date;
+    exception when others then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end;
+    if v_first_joined_on::text <> v_first_joined_text then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end if;
+  end if;
+
+  v_admin_notes := nullif(btrim(coalesce(p_proposed->>'admin_notes','')),'');
+  if v_admin_notes is not null and char_length(v_admin_notes)>4000 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_marketing_status := lower(btrim(coalesce(p_proposed->>'marketing_status','')));
+  if v_marketing_status not in ('unknown','allowed','opted_out') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_reason := nullif(btrim(coalesce(p_reason,'')),'');
+  if v_reason is not null and char_length(v_reason)>500 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if char_length(v_actor)>200 then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  -- Share Add Member's identity lock so create/edit duplicate checks cannot race.
+  perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
+
+  select m.* into v_member from public.members m where m.id=p_member_id for update;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  select ss.ever_blocked into v_ever_blocked from public.member_safeguarding_state ss where ss.member_id=p_member_id;
+  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
+
+  if v_member.display_name is distinct from (p_expected->>'display_name')
+     or v_member.email is distinct from (p_expected->>'email')
+     or v_member.first_joined_on::text is distinct from (p_expected->>'first_joined_on')
+     or v_member.admin_notes is distinct from (p_expected->>'admin_notes')
+     or v_member.marketing_status is distinct from (p_expected->>'marketing_status') then
+    raise exception using errcode='P0001', message='STALE_PREVIEW';
+  end if;
+
+  if v_member.display_name is distinct from v_display_name then
+    v_before := v_before || jsonb_build_object('display_name',v_member.display_name);
+    v_after := v_after || jsonb_build_object('display_name',v_display_name);
+  end if;
+  if v_member.email is distinct from v_email then
+    v_before := v_before || jsonb_build_object('email',v_member.email);
+    v_after := v_after || jsonb_build_object('email',v_email);
+  end if;
+  if v_member.first_joined_on is distinct from v_first_joined_on then
+    v_before := v_before || jsonb_build_object('first_joined_on',v_member.first_joined_on);
+    v_after := v_after || jsonb_build_object('first_joined_on',v_first_joined_on);
+    if v_reason is null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+  if v_member.admin_notes is distinct from v_admin_notes then
+    v_before := v_before || jsonb_build_object('admin_notes',v_member.admin_notes);
+    v_after := v_after || jsonb_build_object('admin_notes',v_admin_notes);
+  end if;
+  if v_member.marketing_status is distinct from v_marketing_status then
+    v_before := v_before || jsonb_build_object('marketing_status',v_member.marketing_status);
+    v_after := v_after || jsonb_build_object('marketing_status',v_marketing_status);
+  end if;
+  if v_before='{}'::jsonb then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if v_email is not null and exists (
+    select 1 from public.members m
+    where m.id<>p_member_id and lower(btrim(coalesce(m.email,'')))=v_email
+  ) then raise exception using errcode='P0001', message='DUPLICATE_EMAIL'; end if;
+
+  if v_ever_blocked and v_member.email is distinct from v_email then
+    perform public.cm_protect_member_identifier(
+      p_member_id,'email',v_member.email,'identity_correction',v_actor,null
+    );
+    perform public.cm_protect_member_identifier(
+      p_member_id,'email',v_email,'identity_correction',v_actor,null
+    );
+  end if;
+
+  update public.members
+  set display_name=v_display_name,
+      email=v_email,
+      first_joined_on=v_first_joined_on,
+      admin_notes=v_admin_notes,
+      marketing_status=v_marketing_status,
+      updated_at=now()
+  where id=p_member_id;
+
+  insert into public.membership_events(
+    member_id,event_type,reason,actor_type,actor_id,metadata
+  ) values (
+    p_member_id,'MEMBER_DETAILS_UPDATED',v_reason,'admin',v_actor,
+    jsonb_build_object('before',v_before,'after',v_after)
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'MEMBER_DETAILS_UPDATED','member',p_member_id::text,
+    v_before,v_after,v_reason
+  );
+
+  return query select p_member_id,v_event_id;
+end;
+$$;
+
+create or replace function public.admin_update_telegram_username(
+  p_member_id uuid,
+  p_telegram_account_id uuid,
+  p_expected_username text,
+  p_new_username text,
+  p_reason text,
+  p_actor_id text
+) returns table(telegram_account_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_account public.telegram_accounts%rowtype;
+  v_account_id uuid;
+  v_expected text;
+  v_current text;
+  v_new text;
+  v_reason text;
+  v_actor text;
+  v_event_id uuid;
+  v_ever_blocked boolean;
+begin
+  if p_member_id is null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  v_expected := nullif(lower(regexp_replace(btrim(coalesce(p_expected_username,'')),'^@','')),'');
+  v_new := nullif(lower(regexp_replace(btrim(coalesce(p_new_username,'')),'^@','')),'');
+  if v_expected is not null and (
+    char_length(v_expected)<5 or char_length(v_expected)>32 or v_expected !~ '^[a-z0-9_]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  if v_new is not null and (
+    char_length(v_new)<5 or char_length(v_new)>32 or v_new !~ '^[a-z0-9_]+$'
+  ) then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  v_reason := nullif(btrim(coalesce(p_reason,'')),'');
+  if v_reason is not null and char_length(v_reason)>500 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if char_length(v_actor)>200 then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
+  perform 1 from public.members m where m.id=p_member_id;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  select ss.ever_blocked into v_ever_blocked from public.member_safeguarding_state ss where ss.member_id=p_member_id;
+  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
+
+  if p_telegram_account_id is not null then
+    select ta.* into v_account
+    from public.telegram_accounts ta
+    where ta.id=p_telegram_account_id and ta.member_id=p_member_id
+    for update;
+    if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    v_current := nullif(lower(regexp_replace(btrim(coalesce(v_account.telegram_username,'')),'^@','')),'');
+    if v_current is distinct from v_expected then
+      raise exception using errcode='P0001', message='STALE_PREVIEW';
+    end if;
+    if v_current is not distinct from v_new then
+      raise exception using errcode='P0001', message='INVALID_INPUT';
+    end if;
+    v_account_id := v_account.id;
+  else
+    if v_expected is not null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    if exists(select 1 from public.telegram_accounts ta where ta.member_id=p_member_id) then
+      raise exception using errcode='P0001', message='STALE_PREVIEW';
+    end if;
+    if v_new is null then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  if v_new is not null and exists (
+    select 1 from public.telegram_accounts ta
+    where (v_account_id is null or ta.id<>v_account_id)
+      and nullif(lower(regexp_replace(btrim(coalesce(ta.telegram_username,'')),'^@','')),'')=v_new
+  ) then raise exception using errcode='P0001', message='DUPLICATE_TELEGRAM'; end if;
+
+  if v_ever_blocked and v_current is distinct from v_new then
+    perform public.cm_protect_member_identifier(
+      p_member_id,'telegram_username',v_current,'identity_correction',v_actor,null
+    );
+    perform public.cm_protect_member_identifier(
+      p_member_id,'telegram_username',v_new,'identity_correction',v_actor,null
+    );
+  end if;
+
+  if v_account_id is null then
+    insert into public.telegram_accounts(
+      member_id,telegram_user_id,telegram_username,telegram_raw,
+      bot_started_at,linked_at,dm_available,last_verified_at
+    ) values (
+      p_member_id,null,v_new,null,null,null,false,null
+    ) returning id into v_account_id;
+  else
+    update public.telegram_accounts
+    set telegram_username=v_new
+    where id=v_account_id;
+  end if;
+
+  insert into public.membership_events(
+    member_id,event_type,reason,actor_type,actor_id,metadata
+  ) values (
+    p_member_id,'TELEGRAM_USERNAME_UPDATED',v_reason,'admin',v_actor,
+    jsonb_build_object(
+      'telegram_account_id',v_account_id,
+      'before',jsonb_build_object('telegram_username',v_current),
+      'after',jsonb_build_object('telegram_username',v_new)
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'TELEGRAM_USERNAME_UPDATED','telegram_account',v_account_id::text,
+    jsonb_build_object('telegram_username',v_current),
+    jsonb_build_object('telegram_username',v_new),v_reason
+  );
+
+  return query select v_account_id,v_event_id;
+end;
+$$;
