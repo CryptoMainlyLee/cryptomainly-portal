@@ -9,6 +9,7 @@ type Props = {
     status?: string;
     type?: string;
     review?: string;
+    blocked?: string;
     q?: string;
   };
 };
@@ -16,7 +17,7 @@ type Props = {
 export const dynamic = "force-dynamic";
 
 function formatDate(value: string | null) {
-  if (!value) return "â€”";
+  if (!value) return "—";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
     month: "short",
@@ -52,12 +53,14 @@ function filterMembers(members: MemberOverview[], params: Props["searchParams"])
   const status = params?.status?.toUpperCase();
   const type = params?.type?.toLowerCase();
   const review = params?.review;
+  const blocked = params?.blocked;
   const query = params?.q?.trim().toLowerCase();
 
   return members.filter((member) => {
     if (status && status !== "ALL" && member.status !== status) return false;
     if (type && type !== "all" && member.entitlement_type !== type) return false;
     if (review === "1" && member.open_review_count === 0) return false;
+    if (blocked === "1" && !member.is_blocked) return false;
     if (query) {
       const haystack = [
         member.display_name,
@@ -92,6 +95,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
     (m) => m.status === "ACTIVE" && m.entitlement_type === "complimentary"
   ).length;
   const review = members.filter((m) => m.open_review_count > 0).length;
+  const blockedCount = members.filter((m) => m.is_blocked).length;
   const botLinked = members.filter(
     (m) => m.status === "ACTIVE" && m.telegram_user_id
   ).length;
@@ -102,6 +106,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
     ["Complimentary", compActive, "Current free access"],
     ["Former VIP", former, "Retained for CRM"],
     ["Open Reviews", review, "Members requiring review"],
+    ["Blocked", blockedCount, "Safeguarding restrictions"],
     ["Bot Linked", botLinked, "Active numeric Telegram IDs"],
   ] as const;
 
@@ -117,7 +122,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
               VIP Membership Admin
             </h1>
             <p className="mt-2 text-sm text-slate-400">
-              Phase 2 â€¢ audited membership administration â€¢ live Supabase data
+              Phase 2 • audited membership administration • live Supabase data
             </p>
           </div>
 
@@ -128,7 +133,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
           </form>
         </header>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
           {cards.map(([label, value, note]) => (
             <div
               key={label}
@@ -146,10 +151,11 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
         <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60">
           <div className="border-b border-slate-800 p-4">
             <form className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
+              {searchParams?.blocked === "1" ? <input type="hidden" name="blocked" value="1" /> : null}
               <input
                 name="q"
                 defaultValue={searchParams?.q}
-                placeholder="Search member, Telegram, emailâ€¦"
+                placeholder="Search member, Telegram, email…"
                 className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-amber-400"
               />
 
@@ -202,6 +208,12 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                 Review queue
               </Link>
               <Link
+                href="/admin/vip?blocked=1"
+                className="rounded-full border border-rose-500/40 px-3 py-1.5 text-rose-300"
+              >
+                Blocked
+              </Link>
+              <Link
                 href="/admin/vip"
                 className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300"
               >
@@ -243,6 +255,17 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                       >
                         {member.status}
                       </span>
+                      {member.is_blocked ? (
+                        <div className="mt-1">
+                          <span className="inline-flex rounded-full border border-rose-400/60 bg-rose-500/20 px-2.5 py-1 text-[11px] font-bold tracking-wider text-rose-100">BLOCKED</span>
+                        </div>
+                      ) : null}
+                      {member.telegram_removal_required ? (
+                        <div className="mt-1 text-[11px] font-medium text-rose-300">Telegram removal required</div>
+                      ) : null}
+                      {member.effective_access_restoration_required ? (
+                        <div className="mt-1 text-[11px] font-medium text-violet-300">Access restoration required</div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-slate-300">
                       {typeLabel(member.entitlement_type)}
@@ -280,7 +303,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                           <div className="mt-1 text-[11px] text-slate-600">Opened {formatReviewDate(member.review_opened_at)}</div>
                         </div>
                       ) : (
-                        <span className="text-slate-600">â€”</span>
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -288,7 +311,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
                         href={`/admin/vip/${member.member_id}`}
                         className="font-medium text-amber-300 hover:text-amber-200"
                       >
-                        View â†’
+                        View →
                       </Link>
                     </td>
                   </tr>

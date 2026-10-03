@@ -37,3 +37,19 @@ assert.match(actions, /isBlocked: boolean/);
 assert.match(actions, /accessRestorationRequired: boolean/);
 
 console.log("PASS blocked member safeguarding UI wiring is present");
+
+const vipRoot = new URL("../app/admin/vip/", import.meta.url);
+const dashboard = readFileSync(new URL("page.tsx", vipRoot), "utf8");
+const addMember = readFileSync(new URL("new/AddMemberForm.tsx", vipRoot), "utf8");
+
+assert.match(dashboard, /href="\/admin\/vip\?blocked=1"/);
+assert.match(dashboard, />BLOCKED</);
+assert.match(dashboard, /Telegram removal required/);
+assert.match(dashboard, /Access restoration required/);
+assert.match(dashboard, /View →/);
+assert.doesNotMatch(dashboard, /â€”|â†’|â€¢|â€¦/);
+assert.match(addMember, /Blocked member match/);
+assert.match(addMember, /Protected identity match/);
+assert.match(addMember, /No new member can be created, reactivated or invited/);
+assert.match(addMember, /Use the existing canonical member record/);
+assert.doesNotMatch(addMember, /Blocked.*override|override.*Blocked/i);

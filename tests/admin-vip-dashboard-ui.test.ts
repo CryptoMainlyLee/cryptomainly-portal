@@ -38,3 +38,38 @@ test("Review rows show the earliest open date", () => {
   assert.match(source, /member\.review_opened_at/);
   assert.match(source, /Opened /);
 });
+
+
+test("Blocked is an additive dashboard filter and count, independent of membership status", () => {
+  assert.match(source, /blocked\?: string/);
+  assert.match(source, /const blocked = params\?\.blocked/);
+  assert.match(source, /blocked === "1" && !member\.is_blocked/);
+  assert.match(source, /const active = members\.filter\(\(m\) => m\.status === "ACTIVE"\)\.length/);
+  assert.match(source, /members\.filter\(\(m\) => m\.is_blocked\)\.length/);
+  assert.match(source, /\["Blocked", blockedCount,/);
+  assert.match(source, /member\.status/);
+  assert.match(source, />BLOCKED</);
+});
+
+test("Blocked rows surface outstanding safeguarding work", () => {
+  assert.match(source, /member\.telegram_removal_required/);
+  assert.match(source, /Telegram removal required/);
+  assert.match(source, /member\.effective_access_restoration_required/);
+  assert.match(source, /Access restoration required/);
+});
+
+test("quick actions order Blocked before Clear filters", () => {
+  const addMember = source.indexOf('href="/admin/vip/new"');
+  const activeOnly = source.indexOf('href="/admin/vip?status=ACTIVE"');
+  const reviewQueue = source.indexOf('href="/admin/vip?review=1"');
+  const blocked = source.indexOf('href="/admin/vip?blocked=1"');
+  const clearFilters = source.indexOf('href="/admin/vip"');
+  assert.ok(addMember < activeOnly && activeOnly < reviewQueue && reviewQueue < blocked && blocked < clearFilters);
+});
+
+
+test("dashboard uses correct Unicode punctuation and no known mojibake", () => {
+  assert.match(source, /return "—"/);
+  assert.match(source, /View →/);
+  assert.doesNotMatch(source, /â€”|â†’|â€¢|â€¦/);
+});

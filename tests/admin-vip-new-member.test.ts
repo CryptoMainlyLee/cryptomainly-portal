@@ -202,3 +202,19 @@ test("hard-match result distinguishes Blocked, protected-history, and ordinary d
   assert.equal(ordinary.code, "DUPLICATE_EMAIL");
   assert.doesNotMatch(ordinary.message, /Blocked|safeguard/i);
 });
+
+
+test("Add Member hard-stop UI distinguishes Blocked and protected identities without override", async () => {
+  const { readFileSync } = await import("node:fs");
+  const form = readFileSync(
+    new URL("../app/admin/vip/new/AddMemberForm.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(form, /safeguarding: "blocked" \| "previously_blocked" \| null/);
+  assert.match(form, /Blocked member match/);
+  assert.match(form, /No new member can be created, reactivated or invited/);
+  assert.match(form, /Protected identity match/);
+  assert.match(form, /Use the existing canonical member record/);
+  assert.match(form, /href=\{`\/admin\/vip\/\$\{match\.memberId\}`\}/);
+  assert.doesNotMatch(form, /override.*Blocked|Blocked.*override/i);
+});
