@@ -186,14 +186,26 @@ export function buildNewMemberPreview(input: NewMemberDraft): NewMemberPreview {
   };
 }
 
+export type NewMemberDuplicateMatch = {
+  memberId: string;
+  displayName: string;
+  field: "email" | "telegram";
+  matchSource: "current" | "protected_history";
+  safeguarding: "blocked" | "previously_blocked" | null;
+};
+
 export type NewMemberRpcErrorCode =
   | "INVALID_INPUT"
   | "DUPLICATE_EMAIL"
   | "DUPLICATE_TELEGRAM"
-  | "DUPLICATE_TX_HASH";
+  | "DUPLICATE_TX_HASH"
+  | "BLOCKED_MEMBER_MATCH"
+  | "PROTECTED_MEMBER_MATCH";
 
 export function newMemberRpcErrorCodeFromDetail(detail: string): NewMemberRpcErrorCode | null {
   const codes: NewMemberRpcErrorCode[] = [
+    "BLOCKED_MEMBER_MATCH",
+    "PROTECTED_MEMBER_MATCH",
     "DUPLICATE_EMAIL",
     "DUPLICATE_TELEGRAM",
     "DUPLICATE_TX_HASH",

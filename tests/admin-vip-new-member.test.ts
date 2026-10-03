@@ -10,6 +10,7 @@ import {
   requiresSimilarNameAcknowledgement,
   validateNewMemberDraft,
   type NewMemberDraft,
+  type NewMemberDuplicateMatch,
 } from "../app/admin/vip/_lib/new-member.ts";
 
 function paidDraft(overrides: Partial<NewMemberDraft> = {}): NewMemberDraft {
@@ -150,4 +151,29 @@ test("requires acknowledgement only when similar names exist", () => {
   assert.equal(requiresSimilarNameAcknowledgement(1, false), true);
   assert.equal(requiresSimilarNameAcknowledgement(2, true), false);
   assert.equal(requiresSimilarNameAcknowledgement(0, false), false);
+});
+
+
+test("maps Blocked and protected-member Add Member RPC errors", () => {
+  assert.equal(newMemberRpcErrorCodeFromDetail("error BLOCKED_MEMBER_MATCH"), "BLOCKED_MEMBER_MATCH");
+  assert.equal(newMemberRpcErrorCodeFromDetail("error PROTECTED_MEMBER_MATCH"), "PROTECTED_MEMBER_MATCH");
+});
+
+test("strong duplicate matches carry current or protected identity provenance", () => {
+  const blocked: NewMemberDuplicateMatch = {
+    memberId: "blocked-member",
+    displayName: "Blocked Member",
+    field: "email",
+    matchSource: "current",
+    safeguarding: "blocked",
+  };
+  const historical: NewMemberDuplicateMatch = {
+    memberId: "prior-member",
+    displayName: "Prior Member",
+    field: "telegram",
+    matchSource: "protected_history",
+    safeguarding: "previously_blocked",
+  };
+  assert.equal(blocked.safeguarding, "blocked");
+  assert.equal(historical.matchSource, "protected_history");
 });
