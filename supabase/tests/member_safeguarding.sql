@@ -937,10 +937,12 @@ declare
   v_today date := (now() at time zone 'Europe/London')::date;
   v_active uuid;
   v_former uuid;
+  v_change uuid;
   v_correct uuid;
   v_expiry uuid;
   v_active_period uuid;
   v_former_period uuid;
+  v_change_period uuid;
   v_correct_period uuid;
   v_expiry_period uuid;
   v_version bigint;
@@ -967,6 +969,15 @@ begin
   ) values (
     v_former,'paid','test',v_today-90,v_today-30,'fixed',false,'Original former period'
   ) returning id into v_former_period;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Safeguard Change Expiry Former','sg-change-former@example.com','admin_manual','unknown')
+  returning id into v_change;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review,admin_note
+  ) values (
+    v_change,'paid','test',v_today-90,v_today-15,'fixed',false,'Change expiry fixture'
+  ) returning id into v_change_period;
 
   select safeguarding_version into v_version from public.admin_block_member(
     v_active,0,'Action guard active','Block relationship actions',true,'sql-test'
@@ -1073,6 +1084,36 @@ begin
     if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
   end;
 
+  -- A previously Blocked FORMER expiry correction that becomes ACTIVE requires Restore Access.
+  select safeguarding_version into v_version from public.admin_block_member(
+    v_change,0,'Change expiry fixture block','Preserve safeguarding after factual expiry correction',true,'sql-test'
+  );
+  perform * from public.admin_unblock_member(
+    v_change,v_version,'Change expiry fixture unblock',true,'sql-test'
+  );
+  perform * from public.admin_change_membership_expiry(
+    v_change,v_change_period,v_today-15,v_today+15,
+    'Correct former expiry into active range',false,'sql-test'
+  );
+  if not exists (
+    select 1 from public.member_safeguarding_state s
+    where s.member_id=v_change and not s.is_blocked and s.ever_blocked
+      and s.access_restoration_required
+  ) then raise exception 'Change Expiry former-to-active did not require Restore Access'; end if;
+  if not exists (
+    select 1 from public.member_safeguarding_events e
+    where e.member_id=v_change and e.event_type='ACCESS_RESTORATION_REQUIRED'
+      and e.metadata->>'membership_period_id'=v_change_period::text
+      and e.metadata->>'before_status'='FORMER'
+      and e.metadata->>'after_status'='ACTIVE'
+  ) then raise exception 'Change Expiry restoration event missing'; end if;
+  if not exists (
+    select 1 from public.audit_log a
+    where a.action='ACCESS_RESTORATION_REQUIRED'
+      and a.entity_type='member_safeguarding_state'
+      and a.entity_id=v_change::text
+  ) then raise exception 'Change Expiry restoration audit missing'; end if;
+
   -- A normal unblocked FORMER member may reactivate deliberately.
   select safeguarding_version into v_version from public.member_safeguarding_state where member_id=v_former;
   perform * from public.admin_unblock_member(
@@ -1146,6 +1187,31 @@ begin
       and p.effective_access_restoration_required=false
       and p.restore_access_allowed=false and p.membership_action_allowed=true
   ) then raise exception 'Expired restoration flag remained operationally effective'; end if;
+
+  perform * from public.admin_reactivate_membership(
+    v_expiry,v_expiry_period,v_today-1,v_today,1,'months',100,'USDT',v_today,
+    'sg-expiry-reactivate',null,'Deliberate reactivation after expiry','sql-test'
+  );
+  if exists (
+    select 1 from public.member_safeguarding_state s
+    where s.member_id=v_expiry and s.access_restoration_required
+  ) then raise exception 'Reactivation resurrected expired access-restoration requirement'; end if;
+  if exists (
+    select 1 from public.member_safeguarding_events e
+    where e.member_id=v_expiry and e.event_type='MEMBER_ACCESS_RESTORED'
+  ) then raise exception 'Reactivation invented a Restore Access safeguarding event'; end if;
+  if not exists (
+    select 1 from public.audit_log a
+    where a.entity_type='member_safeguarding_state' and a.entity_id=v_expiry::text
+      and a.action='ACCESS_RESTORATION_EXPIRED_CLEARED'
+  ) then raise exception 'Expired restoration normalization audit missing'; end if;
+  if not exists (
+    select 1 from public.admin_member_relationship_policy p
+    where p.member_id=v_expiry and p.membership_status='ACTIVE'
+      and p.access_restoration_required=false
+      and p.effective_access_restoration_required=false
+      and p.access_grant_allowed=true
+  ) then raise exception 'Deliberate Reactivation remained safeguarding-suspended'; end if;
 end $$;
 
 rollback;

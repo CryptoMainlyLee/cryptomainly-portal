@@ -1139,10 +1139,13 @@ begin
   -- Share Add Member's identity lock so create/edit duplicate checks cannot race.
   perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
 
+  select ss.ever_blocked into v_ever_blocked
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
   select m.* into v_member from public.members m where m.id=p_member_id for update;
   if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
-  select ss.ever_blocked into v_ever_blocked from public.member_safeguarding_state ss where ss.member_id=p_member_id;
-  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
 
   if v_member.display_name is distinct from (p_expected->>'display_name')
      or v_member.email is distinct from (p_expected->>'email')
@@ -1257,10 +1260,13 @@ begin
   if char_length(v_actor)>200 then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
 
   perform pg_advisory_xact_lock(hashtext('cryptomainly_admin_create_member'));
+  select ss.ever_blocked into v_ever_blocked
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
   perform 1 from public.members m where m.id=p_member_id;
   if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
-  select ss.ever_blocked into v_ever_blocked from public.member_safeguarding_state ss where ss.member_id=p_member_id;
-  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
 
   if p_telegram_account_id is not null then
     select ta.* into v_account
@@ -1364,6 +1370,12 @@ declare
   v_actor text;
   v_today date := (now() at time zone 'Europe/London')::date;
   v_event_id uuid;
+  v_safeguarding_state public.member_safeguarding_state%rowtype;
+  v_status_before text;
+  v_status_after text;
+  v_safeguarding_event_id uuid;
+  v_state_before jsonb;
+  v_state_after jsonb;
 begin
   if p_member_id is null or p_period_id is null or p_expected_expiry is null or p_new_expiry is null then
     raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
@@ -1375,11 +1387,16 @@ begin
   end if;
   v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
 
-  if not exists (
-    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
-  ) then
+  select ss.* into v_safeguarding_state
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then
     raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
   end if;
+  v_state_before:=to_jsonb(v_safeguarding_state);
+  select cms.status into v_status_before
+  from public.current_member_status cms where cms.member_id=p_member_id limit 1;
   if exists (
     select 1 from public.admin_member_relationship_policy rp
     where rp.member_id=p_member_id and rp.membership_action_allowed is not true
@@ -1428,6 +1445,9 @@ begin
   set expires_on = p_new_expiry
   where id = p_period_id;
 
+  select cms.status into v_status_after
+  from public.current_member_status cms where cms.member_id=p_member_id limit 1;
+
   insert into public.membership_events (
     member_id,
     membership_period_id,
@@ -1463,6 +1483,36 @@ begin
     jsonb_set(to_jsonb(v_period), '{expires_on}', to_jsonb(p_new_expiry)),
     v_reason
   );
+
+  if v_safeguarding_state.ever_blocked
+     and not v_safeguarding_state.is_blocked
+     and v_status_before='FORMER'
+     and v_status_after in ('ACTIVE','LIFETIME') then
+    update public.member_safeguarding_state ss
+    set access_restoration_required=true,version=ss.version+1,updated_at=now()
+    where ss.member_id=p_member_id
+    returning to_jsonb(ss) into v_state_after;
+
+    insert into public.member_safeguarding_events(
+      member_id,event_type,actor_id,reason,metadata
+    ) values (
+      p_member_id,'ACCESS_RESTORATION_REQUIRED',v_actor,
+      'Expiry correction reactivated an ever-Blocked entitlement and requires a separate Restore Access decision.',
+      jsonb_build_object(
+        'membership_period_id',p_period_id,
+        'membership_change_event_id',v_event_id,
+        'before_status',v_status_before,'after_status',v_status_after
+      )
+    ) returning id into v_safeguarding_event_id;
+
+    insert into public.audit_log(
+      actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+    ) values (
+      'admin',v_actor,'ACCESS_RESTORATION_REQUIRED','member_safeguarding_state',p_member_id::text,
+      v_state_before,v_state_after,
+      'Expiry correction reactivated an ever-Blocked entitlement and requires a separate Restore Access decision.'
+    );
+  end if;
 
   return query select p_member_id, p_period_id, v_old_expiry, p_new_expiry, null::uuid, v_event_id;
 end;
@@ -1509,9 +1559,11 @@ begin
   end if;
   v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
 
-  if not exists (
-    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
-  ) then
+  perform ss.member_id
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then
     raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
   end if;
   if exists (
@@ -1669,9 +1721,11 @@ begin
 
   v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
 
-  if not exists (
-    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
-  ) then
+  perform ss.member_id
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then
     raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
   end if;
   if exists (
@@ -1835,6 +1889,9 @@ declare
   v_today date := (now() at time zone 'Europe/London')::date;
   v_payment_id uuid;
   v_event_id uuid;
+  v_safeguarding_state public.member_safeguarding_state%rowtype;
+  v_state_before jsonb;
+  v_state_after jsonb;
 begin
   if p_member_id is null or p_reactivation_start is null
      or p_duration_value is null or p_duration_value <= 0
@@ -1867,9 +1924,11 @@ begin
 
   v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
 
-  if not exists (
-    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
-  ) then
+  select ss.* into v_safeguarding_state
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then
     raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
   end if;
   if exists (
@@ -1931,6 +1990,25 @@ begin
       and coalesce(mp.ended_early_on, mp.expires_on, 'infinity'::date) >= p_reactivation_start
   ) then
     raise exception using errcode = 'P0001', message = 'OVERLAPPING_ENTITLEMENT';
+  end if;
+
+  if v_safeguarding_state.access_restoration_required then
+    v_state_before:=to_jsonb(v_safeguarding_state);
+    update public.member_safeguarding_state as ss
+    set access_restoration_required=false,
+        version=version+1,
+        updated_at=now()
+    where ss.member_id=p_member_id
+    returning to_jsonb(ss) into v_state_after;
+
+    insert into public.audit_log(
+      actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+    ) values (
+      'admin',v_actor,'ACCESS_RESTORATION_EXPIRED_CLEARED',
+      'member_safeguarding_state',p_member_id::text,
+      v_state_before,v_state_after,
+      'Expired access-restoration requirement cleared by deliberate Reactivation.'
+    );
   end if;
 
   insert into public.membership_periods (
