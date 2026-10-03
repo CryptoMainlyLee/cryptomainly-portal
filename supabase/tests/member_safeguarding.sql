@@ -419,7 +419,7 @@ begin
     if sqlerrm<>'ACCESS_RESTORATION_NOT_REQUIRED' then raise; end if;
   end;
 
-  select safeguarding_version into v_version from public.member_safeguarding_state where member_id=v_lifetime;
+  select version into v_version from public.member_safeguarding_state where member_id=v_lifetime;
   select safeguarding_version into v_version from public.admin_restore_member_access(
     v_lifetime,v_version,'Restore existing lifetime access deliberately',true,'sql-test'
   );
@@ -1054,7 +1054,7 @@ begin
   end if;
 
   -- Unblock ACTIVE: relationship actions remain unavailable until Restore Access.
-  select safeguarding_version into v_version from public.member_safeguarding_state where member_id=v_active;
+  select version into v_version from public.member_safeguarding_state where member_id=v_active;
   perform * from public.admin_unblock_member(
     v_active,v_version,'Restriction lifted but access not restored',true,'sql-test'
   );
@@ -1115,7 +1115,7 @@ begin
   ) then raise exception 'Change Expiry restoration audit missing'; end if;
 
   -- A normal unblocked FORMER member may reactivate deliberately.
-  select safeguarding_version into v_version from public.member_safeguarding_state where member_id=v_former;
+  select version into v_version from public.member_safeguarding_state where member_id=v_former;
   perform * from public.admin_unblock_member(
     v_former,v_version,'Former member may return deliberately',true,'sql-test'
   );
