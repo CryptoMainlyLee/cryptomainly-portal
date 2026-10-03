@@ -1,7 +1,7 @@
 # CryptoMainly Blocked Member Safeguarding — Design Spec
 
 Date: 2026-10-03
-Status: Design sections approved in chat; written specification awaiting approval
+Status: Approved 2026-10-03
 
 ## Purpose
 
