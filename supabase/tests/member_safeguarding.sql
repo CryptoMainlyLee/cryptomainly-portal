@@ -928,3 +928,224 @@ begin
     'authenticated','public.admin_create_member(text,text,text,text,date,integer,text,date,text,text,numeric,text,date,text,text,text)','EXECUTE'
   ) then raise exception 'Browser roles can create safeguarded members'; end if;
 end $$;
+
+
+-- Task 4: relationship actions are blocked server-side while safeguarding forbids them.
+begin;
+do $$
+declare
+  v_today date := (now() at time zone 'Europe/London')::date;
+  v_active uuid;
+  v_former uuid;
+  v_correct uuid;
+  v_expiry uuid;
+  v_active_period uuid;
+  v_former_period uuid;
+  v_correct_period uuid;
+  v_expiry_period uuid;
+  v_version bigint;
+  v_expected jsonb;
+  v_proposed jsonb;
+  v_period_snapshot jsonb;
+  v_payment_count integer;
+  v_event_count integer;
+begin
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Safeguard Action Active','sg-action-active@example.com','admin_manual','unknown')
+  returning id into v_active;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review,admin_note
+  ) values (
+    v_active,'paid','test',v_today-30,v_today+30,'fixed',false,'Original active period'
+  ) returning id into v_active_period;
+
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Safeguard Action Former','sg-action-former@example.com','admin_manual','unknown')
+  returning id into v_former;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review,admin_note
+  ) values (
+    v_former,'paid','test',v_today-90,v_today-30,'fixed',false,'Original former period'
+  ) returning id into v_former_period;
+
+  select safeguarding_version into v_version from public.admin_block_member(
+    v_active,0,'Action guard active','Block relationship actions',true,'sql-test'
+  );
+  perform * from public.admin_block_member(
+    v_former,0,'Action guard former','Block reactivation',true,'sql-test'
+  );
+  select to_jsonb(mp) into v_period_snapshot
+  from public.membership_periods mp where mp.id=v_active_period;
+  select count(*) into v_payment_count from public.payments where member_id=v_active;
+  select count(*) into v_event_count from public.membership_events where member_id=v_active;
+
+  begin
+    perform * from public.admin_change_membership_expiry(
+      v_active,v_active_period,v_today+30,v_today+40,'Blocked expiry change',false,'sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING for expiry change';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_add_membership_time(
+      v_active,v_active_period,v_today+30,7,'days','Blocked time add','sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING for add time';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_renew_active_membership(
+      v_active,v_active_period,v_today+30,1,'months',100,'USDT',v_today,
+      'sg-action-renew-blocked',null,'Blocked renewal','sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING for renewal';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_reactivate_membership(
+      v_former,v_former_period,v_today-30,v_today,1,'months',100,'USDT',v_today,
+      'sg-action-reactivate-blocked',null,'Blocked reactivation','sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING for reactivation';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+
+  if (select to_jsonb(mp) from public.membership_periods mp where mp.id=v_active_period)
+       is distinct from v_period_snapshot then
+    raise exception 'Blocked relationship action changed membership period';
+  end if;
+  if (select count(*) from public.payments where member_id=v_active)<>v_payment_count then
+    raise exception 'Blocked relationship action created payment';
+  end if;
+  if (select count(*) from public.membership_events where member_id=v_active)<>v_event_count then
+    raise exception 'Blocked relationship action created membership event';
+  end if;
+
+  -- Factual correction stays available while Blocked.
+  v_expected:=jsonb_build_object(
+    'entitlement_type','paid','plan_name',null,'starts_on',(v_today-30)::text,
+    'expires_on',(v_today+30)::text,'expiry_mode','fixed','removal_protected',false,
+    'protection_reason',null,'ended_early_on',null,'admin_note','Original active period'
+  );
+  v_proposed:=jsonb_set(v_expected,'{admin_note}',to_jsonb('Corrected while Blocked'::text));
+  perform * from public.admin_correct_membership_period(
+    v_active,v_active_period,v_expected,v_proposed,'Factual note correction while Blocked','sql-test'
+  );
+  if (select admin_note from public.membership_periods where id=v_active_period)<>'Corrected while Blocked' then
+    raise exception 'Blocked factual correction was incorrectly prevented';
+  end if;
+  if not (select is_blocked from public.member_safeguarding_state where member_id=v_active) then
+    raise exception 'Factual correction altered Blocked state';
+  end if;
+
+  -- Unblock ACTIVE: relationship actions remain unavailable until Restore Access.
+  select safeguarding_version into v_version from public.member_safeguarding_state where member_id=v_active;
+  perform * from public.admin_unblock_member(
+    v_active,v_version,'Restriction lifted but access not restored',true,'sql-test'
+  );
+  begin
+    perform * from public.admin_change_membership_expiry(
+      v_active,v_active_period,v_today+30,v_today+40,'Restore required expiry change',false,'sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING while restoration required';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_add_membership_time(
+      v_active,v_active_period,v_today+30,7,'days','Restore required time add','sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING while restoration required';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+  begin
+    perform * from public.admin_renew_active_membership(
+      v_active,v_active_period,v_today+30,1,'months',100,'USDT',v_today,
+      'sg-action-renew-restore',null,'Restore required renewal','sql-test'
+    );
+    raise exception 'Expected ACTION_BLOCKED_BY_SAFEGUARDING while restoration required';
+  exception when others then
+    if sqlerrm<>'ACTION_BLOCKED_BY_SAFEGUARDING' then raise; end if;
+  end;
+
+  -- A normal unblocked FORMER member may reactivate deliberately.
+  select safeguarding_version into v_version from public.member_safeguarding_state where member_id=v_former;
+  perform * from public.admin_unblock_member(
+    v_former,v_version,'Former member may return deliberately',true,'sql-test'
+  );
+  perform * from public.admin_reactivate_membership(
+    v_former,v_former_period,v_today-30,v_today,1,'months',100,'USDT',v_today,
+    'sg-action-reactivate-ok',null,'Deliberate former-member reactivation','sql-test'
+  );
+
+  -- Previously Blocked FORMER corrected into ACTIVE requires separate Restore Access.
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Safeguard Correction Former','sg-correct-former@example.com','admin_manual','unknown')
+  returning id into v_correct;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review,admin_note
+  ) values (
+    v_correct,'paid','test',v_today-90,v_today-10,'fixed',false,'Correction fixture'
+  ) returning id into v_correct_period;
+  select safeguarding_version into v_version from public.admin_block_member(
+    v_correct,0,'Correction fixture block','Preserve safeguarding history',true,'sql-test'
+  );
+  perform * from public.admin_unblock_member(
+    v_correct,v_version,'Correction fixture unblock',true,'sql-test'
+  );
+  v_expected:=jsonb_build_object(
+    'entitlement_type','paid','plan_name',null,'starts_on',(v_today-90)::text,
+    'expires_on',(v_today-10)::text,'expiry_mode','fixed','removal_protected',false,
+    'protection_reason',null,'ended_early_on',null,'admin_note','Correction fixture'
+  );
+  v_proposed:=jsonb_set(v_expected,'{expires_on}',to_jsonb((v_today+20)::text));
+  perform * from public.admin_correct_membership_period(
+    v_correct,v_correct_period,v_expected,v_proposed,'Correct factual expiry into active range','sql-test'
+  );
+  if not exists (
+    select 1 from public.member_safeguarding_state s
+    where s.member_id=v_correct and not s.is_blocked and s.ever_blocked
+      and s.access_restoration_required
+  ) then raise exception 'Former-to-active correction did not require Restore Access'; end if;
+  if not exists (
+    select 1 from public.member_safeguarding_events e
+    where e.member_id=v_correct and e.event_type='ACCESS_RESTORATION_REQUIRED'
+      and e.metadata->>'membership_period_id'=v_correct_period::text
+      and e.metadata->>'before_status'='FORMER'
+      and e.metadata->>'after_status'='ACTIVE'
+  ) then raise exception 'Former-to-active restoration event missing'; end if;
+  if not exists (
+    select 1 from public.audit_log a
+    where a.action='ACCESS_RESTORATION_REQUIRED'
+      and a.entity_type='member_safeguarding_state'
+      and a.entity_id=v_correct::text
+  ) then raise exception 'Former-to-active restoration audit missing'; end if;
+
+  -- Expiry makes a stored restoration requirement ineffective without inventing Restore Access.
+  insert into public.members(display_name,email,source_system,marketing_status)
+  values ('Safeguard Expiry Fixture','sg-expiry@example.com','admin_manual','unknown')
+  returning id into v_expiry;
+  insert into public.membership_periods(
+    member_id,entitlement_type,source,starts_on,expires_on,expiry_mode,migration_review
+  ) values (
+    v_expiry,'paid','test',v_today-30,v_today+1,'fixed',false
+  ) returning id into v_expiry_period;
+  update public.member_safeguarding_state
+  set ever_blocked=true,access_restoration_required=true,version=2
+  where member_id=v_expiry;
+  update public.membership_periods set expires_on=v_today-1 where id=v_expiry_period;
+  if not exists (
+    select 1 from public.admin_member_relationship_policy p
+    where p.member_id=v_expiry and p.membership_status='FORMER'
+      and p.access_restoration_required=true
+      and p.effective_access_restoration_required=false
+      and p.restore_access_allowed=false and p.membership_action_allowed=true
+  ) then raise exception 'Expired restoration flag remained operationally effective'; end if;
+end $$;
+
+rollback;

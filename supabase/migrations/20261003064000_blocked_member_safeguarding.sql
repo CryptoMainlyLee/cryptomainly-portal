@@ -1334,3 +1334,977 @@ begin
   return query select v_account_id,v_event_id;
 end;
 $$;
+
+
+-- Safeguarding-aware replacements of Phase 2 relationship actions and period correction.
+create or replace function public.admin_change_membership_expiry(
+  p_member_id uuid,
+  p_period_id uuid,
+  p_expected_expiry date,
+  p_new_expiry date,
+  p_reason text,
+  p_past_acknowledged boolean,
+  p_actor_id text
+) returns table(
+  member_id uuid,
+  membership_period_id uuid,
+  old_expiry date,
+  new_expiry date,
+  payment_id uuid,
+  event_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_period public.membership_periods%rowtype;
+  v_old_expiry date;
+  v_reason text;
+  v_actor text;
+  v_today date := (now() at time zone 'Europe/London')::date;
+  v_event_id uuid;
+begin
+  if p_member_id is null or p_period_id is null or p_expected_expiry is null or p_new_expiry is null then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_reason := btrim(coalesce(p_reason, ''));
+  if v_reason = '' or char_length(v_reason) > 500 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
+
+  if not exists (
+    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
+  ) then
+    raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
+  end if;
+  if exists (
+    select 1 from public.admin_member_relationship_policy rp
+    where rp.member_id=p_member_id and rp.membership_action_allowed is not true
+  ) then
+    raise exception using errcode='P0001', message='ACTION_BLOCKED_BY_SAFEGUARDING';
+  end if;
+
+  select mp.* into v_period
+  from public.membership_periods mp
+  where mp.id = p_period_id
+    and mp.member_id = p_member_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if v_period.expiry_mode <> 'fixed'
+     or v_period.expires_on is null
+     or v_period.ended_early_on is not null
+     or not exists (
+       select 1
+       from public.current_member_status cms
+       where cms.member_id = p_member_id
+         and cms.membership_period_id = p_period_id
+         and cms.status in ('ACTIVE', 'FORMER')
+     ) then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if v_period.expires_on is distinct from p_expected_expiry then
+    raise exception using errcode = 'P0001', message = 'STALE_PREVIEW';
+  end if;
+
+  if p_new_expiry = v_period.expires_on then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  if p_new_expiry < v_today and p_past_acknowledged is not true then
+    raise exception using errcode = 'P0001', message = 'PAST_EXPIRY_ACK_REQUIRED';
+  end if;
+
+  v_old_expiry := v_period.expires_on;
+
+  update public.membership_periods
+  set expires_on = p_new_expiry
+  where id = p_period_id;
+
+  insert into public.membership_events (
+    member_id,
+    membership_period_id,
+    event_type,
+    old_expiry,
+    new_expiry,
+    reason,
+    actor_type,
+    actor_id,
+    metadata
+  ) values (
+    p_member_id,
+    p_period_id,
+    'EXPIRY_CHANGED',
+    v_old_expiry,
+    p_new_expiry,
+    v_reason,
+    'admin',
+    v_actor,
+    jsonb_build_object(
+      'old_expiry', v_old_expiry,
+      'new_expiry', p_new_expiry,
+      'past_expiry_acknowledged', coalesce(p_past_acknowledged, false)
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log (
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'EXPIRY_CHANGED', 'membership_period', p_period_id::text,
+    to_jsonb(v_period),
+    jsonb_set(to_jsonb(v_period), '{expires_on}', to_jsonb(p_new_expiry)),
+    v_reason
+  );
+
+  return query select p_member_id, p_period_id, v_old_expiry, p_new_expiry, null::uuid, v_event_id;
+end;
+$$;
+
+create or replace function public.admin_add_membership_time(
+  p_member_id uuid,
+  p_period_id uuid,
+  p_expected_expiry date,
+  p_duration_value integer,
+  p_duration_unit text,
+  p_reason text,
+  p_actor_id text
+) returns table(
+  member_id uuid,
+  membership_period_id uuid,
+  old_expiry date,
+  new_expiry date,
+  payment_id uuid,
+  event_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_period public.membership_periods%rowtype;
+  v_old_expiry date;
+  v_new_expiry date;
+  v_reason text;
+  v_actor text;
+  v_today date := (now() at time zone 'Europe/London')::date;
+  v_event_id uuid;
+begin
+  if p_member_id is null or p_period_id is null or p_expected_expiry is null
+     or p_duration_value is null or p_duration_value <= 0
+     or p_duration_unit not in ('days', 'months') then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_reason := btrim(coalesce(p_reason, ''));
+  if v_reason = '' or char_length(v_reason) > 500 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+  v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
+
+  if not exists (
+    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
+  ) then
+    raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
+  end if;
+  if exists (
+    select 1 from public.admin_member_relationship_policy rp
+    where rp.member_id=p_member_id and rp.membership_action_allowed is not true
+  ) then
+    raise exception using errcode='P0001', message='ACTION_BLOCKED_BY_SAFEGUARDING';
+  end if;
+
+  select mp.* into v_period
+  from public.membership_periods mp
+  where mp.id = p_period_id
+    and mp.member_id = p_member_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if v_period.expiry_mode <> 'fixed'
+     or v_period.expires_on is null
+     or v_period.ended_early_on is not null
+     or v_period.expires_on < v_today
+     or not exists (
+       select 1
+       from public.current_member_status cms
+       where cms.member_id = p_member_id
+         and cms.membership_period_id = p_period_id
+         and cms.status = 'ACTIVE'
+     ) then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if v_period.expires_on is distinct from p_expected_expiry then
+    raise exception using errcode = 'P0001', message = 'STALE_PREVIEW';
+  end if;
+
+  v_old_expiry := v_period.expires_on;
+  v_new_expiry := public.cm_add_membership_duration(v_old_expiry, p_duration_value, p_duration_unit);
+
+  update public.membership_periods
+  set expires_on = v_new_expiry
+  where id = p_period_id;
+
+  insert into public.membership_events (
+    member_id,
+    membership_period_id,
+    event_type,
+    old_expiry,
+    new_expiry,
+    adjustment_value,
+    adjustment_unit,
+    reason,
+    actor_type,
+    actor_id,
+    metadata
+  ) values (
+    p_member_id,
+    p_period_id,
+    'MEMBERSHIP_TIME_ADDED',
+    v_old_expiry,
+    v_new_expiry,
+    p_duration_value,
+    p_duration_unit,
+    v_reason,
+    'admin',
+    v_actor,
+    jsonb_build_object(
+      'old_expiry', v_old_expiry,
+      'new_expiry', v_new_expiry,
+      'duration_value', p_duration_value,
+      'duration_unit', p_duration_unit
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log (
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'MEMBERSHIP_TIME_ADDED', 'membership_period', p_period_id::text,
+    to_jsonb(v_period),
+    jsonb_set(to_jsonb(v_period), '{expires_on}', to_jsonb(v_new_expiry)),
+    v_reason
+  );
+
+  return query select p_member_id, p_period_id, v_old_expiry, v_new_expiry, null::uuid, v_event_id;
+end;
+$$;
+
+create or replace function public.admin_renew_active_membership(
+  p_member_id uuid,
+  p_period_id uuid,
+  p_expected_expiry date,
+  p_duration_value integer,
+  p_duration_unit text,
+  p_amount numeric,
+  p_currency text,
+  p_payment_date date,
+  p_tx_hash text,
+  p_payment_note text,
+  p_reason text,
+  p_actor_id text
+) returns table(
+  member_id uuid,
+  membership_period_id uuid,
+  old_expiry date,
+  new_expiry date,
+  payment_id uuid,
+  event_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_period public.membership_periods%rowtype;
+  v_old_expiry date;
+  v_new_expiry date;
+  v_reason text;
+  v_actor text;
+  v_currency text;
+  v_tx_hash text;
+  v_payment_note text;
+  v_today date := (now() at time zone 'Europe/London')::date;
+  v_payment_id uuid;
+  v_event_id uuid;
+begin
+  if p_member_id is null or p_period_id is null or p_expected_expiry is null
+     or p_duration_value is null or p_duration_value <= 0
+     or p_duration_unit not in ('days', 'months')
+     or p_amount is null or p_amount <= 0
+     or p_payment_date is null then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_reason := btrim(coalesce(p_reason, ''));
+  if v_reason = '' or char_length(v_reason) > 500 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_currency := upper(btrim(coalesce(p_currency, '')));
+  if v_currency = '' or char_length(v_currency) > 12 or v_currency !~ '^[A-Z0-9_-]+$' then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_tx_hash := nullif(btrim(coalesce(p_tx_hash, '')), '');
+  if v_tx_hash is not null and char_length(v_tx_hash) > 200 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_payment_note := nullif(btrim(coalesce(p_payment_note, '')), '');
+  if v_payment_note is not null and char_length(v_payment_note) > 2000 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
+
+  if not exists (
+    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
+  ) then
+    raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
+  end if;
+  if exists (
+    select 1 from public.admin_member_relationship_policy rp
+    where rp.member_id=p_member_id and rp.membership_action_allowed is not true
+  ) then
+    raise exception using errcode='P0001', message='ACTION_BLOCKED_BY_SAFEGUARDING';
+  end if;
+
+  select mp.* into v_period
+  from public.membership_periods mp
+  where mp.id = p_period_id
+    and mp.member_id = p_member_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if v_period.entitlement_type <> 'paid'
+     or v_period.expiry_mode <> 'fixed'
+     or v_period.expires_on is null
+     or v_period.ended_early_on is not null
+     or v_period.expires_on < v_today
+     or not exists (
+       select 1
+       from public.current_member_status cms
+       where cms.member_id = p_member_id
+         and cms.membership_period_id = p_period_id
+         and cms.status = 'ACTIVE'
+         and cms.entitlement_type = 'paid'
+     ) then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if v_period.expires_on is distinct from p_expected_expiry then
+    raise exception using errcode = 'P0001', message = 'STALE_PREVIEW';
+  end if;
+
+  v_old_expiry := v_period.expires_on;
+  v_new_expiry := public.cm_add_membership_duration(v_old_expiry, p_duration_value, p_duration_unit);
+
+  insert into public.payments (
+    member_id,
+    membership_period_id,
+    amount,
+    currency,
+    tx_hash,
+    status,
+    verification_method,
+    received_at,
+    verified_at,
+    verified_by,
+    notes
+  ) values (
+    p_member_id,
+    p_period_id,
+    p_amount,
+    v_currency,
+    v_tx_hash,
+    'verified',
+    'manual',
+    ((p_payment_date::timestamp + time '12:00') at time zone 'Europe/London'),
+    now(),
+    v_actor,
+    v_payment_note
+  ) returning id into v_payment_id;
+
+  update public.membership_periods
+  set expires_on = v_new_expiry
+  where id = p_period_id;
+
+  insert into public.membership_events (
+    member_id,
+    membership_period_id,
+    event_type,
+    old_expiry,
+    new_expiry,
+    adjustment_value,
+    adjustment_unit,
+    reason,
+    actor_type,
+    actor_id,
+    metadata
+  ) values (
+    p_member_id,
+    p_period_id,
+    'MEMBERSHIP_RENEWED',
+    v_old_expiry,
+    v_new_expiry,
+    p_duration_value,
+    p_duration_unit,
+    v_reason,
+    'admin',
+    v_actor,
+    jsonb_build_object(
+      'payment_id', v_payment_id,
+      'amount', p_amount,
+      'currency', v_currency,
+      'payment_date', p_payment_date,
+      'tx_hash', v_tx_hash,
+      'duration_value', p_duration_value,
+      'duration_unit', p_duration_unit
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log (
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'MEMBERSHIP_RENEWED', 'membership_period', p_period_id::text,
+    to_jsonb(v_period),
+    jsonb_build_object(
+      'membership_period', jsonb_set(to_jsonb(v_period), '{expires_on}', to_jsonb(v_new_expiry)),
+      'payment_id', v_payment_id
+    ),
+    v_reason
+  );
+
+  return query select p_member_id, p_period_id, v_old_expiry, v_new_expiry, v_payment_id, v_event_id;
+end;
+$$;
+
+create or replace function public.admin_reactivate_membership(
+  p_member_id uuid,
+  p_expected_latest_period_id uuid,
+  p_expected_latest_expiry date,
+  p_reactivation_start date,
+  p_duration_value integer,
+  p_duration_unit text,
+  p_amount numeric,
+  p_currency text,
+  p_payment_date date,
+  p_tx_hash text,
+  p_payment_note text,
+  p_reason text,
+  p_actor_id text
+) returns table(
+  member_id uuid,
+  membership_period_id uuid,
+  old_expiry date,
+  new_expiry date,
+  payment_id uuid,
+  event_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_member public.members%rowtype;
+  v_latest_id uuid;
+  v_latest_expiry date;
+  v_new_period_id uuid;
+  v_new_expiry date;
+  v_reason text;
+  v_actor text;
+  v_currency text;
+  v_tx_hash text;
+  v_payment_note text;
+  v_today date := (now() at time zone 'Europe/London')::date;
+  v_payment_id uuid;
+  v_event_id uuid;
+begin
+  if p_member_id is null or p_reactivation_start is null
+     or p_duration_value is null or p_duration_value <= 0
+     or p_duration_unit not in ('days', 'months')
+     or p_amount is null or p_amount <= 0
+     or p_payment_date is null
+     or p_reactivation_start > v_today then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_reason := btrim(coalesce(p_reason, ''));
+  if v_reason = '' or char_length(v_reason) > 500 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_currency := upper(btrim(coalesce(p_currency, '')));
+  if v_currency = '' or char_length(v_currency) > 12 or v_currency !~ '^[A-Z0-9_-]+$' then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_tx_hash := nullif(btrim(coalesce(p_tx_hash, '')), '');
+  if v_tx_hash is not null and char_length(v_tx_hash) > 200 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_payment_note := nullif(btrim(coalesce(p_payment_note, '')), '');
+  if v_payment_note is not null and char_length(v_payment_note) > 2000 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INPUT';
+  end if;
+
+  v_actor := coalesce(nullif(btrim(p_actor_id), ''), 'vip-admin');
+
+  if not exists (
+    select 1 from public.member_safeguarding_state ss where ss.member_id=p_member_id
+  ) then
+    raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING';
+  end if;
+  if exists (
+    select 1 from public.admin_member_relationship_policy rp
+    where rp.member_id=p_member_id and rp.membership_action_allowed is not true
+  ) then
+    raise exception using errcode='P0001', message='ACTION_BLOCKED_BY_SAFEGUARDING';
+  end if;
+
+  select m.* into v_member
+  from public.members m
+  where m.id = p_member_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  if exists (
+    select 1
+    from public.membership_periods mp
+    where mp.member_id = p_member_id
+      and mp.ended_early_on is null
+      and (mp.starts_on is null or mp.starts_on <= v_today)
+      and (
+        mp.expiry_mode in ('lifetime', 'manual_no_expiry')
+        or (mp.expiry_mode = 'fixed' and mp.expires_on is not null and mp.expires_on >= v_today)
+      )
+  ) then
+    raise exception using errcode = 'P0001', message = 'ACTION_NOT_ALLOWED';
+  end if;
+
+  select mp.id, mp.expires_on
+  into v_latest_id, v_latest_expiry
+  from public.membership_periods mp
+  where mp.member_id = p_member_id
+  order by
+    case
+      when mp.expiry_mode in ('lifetime', 'manual_no_expiry') and mp.ended_early_on is null then 0
+      when mp.expires_on is not null then 1
+      else 2
+    end,
+    mp.expires_on desc nulls last,
+    mp.created_at desc
+  limit 1;
+
+  if v_latest_id is distinct from p_expected_latest_period_id
+     or v_latest_expiry is distinct from p_expected_latest_expiry then
+    raise exception using errcode = 'P0001', message = 'STALE_PREVIEW';
+  end if;
+
+  v_new_expiry := public.cm_add_membership_duration(p_reactivation_start, p_duration_value, p_duration_unit);
+
+  if exists (
+    select 1
+    from public.membership_periods mp
+    where mp.member_id = p_member_id
+      and coalesce(mp.starts_on, '-infinity'::date) <= v_new_expiry
+      and coalesce(mp.ended_early_on, mp.expires_on, 'infinity'::date) >= p_reactivation_start
+  ) then
+    raise exception using errcode = 'P0001', message = 'OVERLAPPING_ENTITLEMENT';
+  end if;
+
+  insert into public.membership_periods (
+    member_id,
+    entitlement_type,
+    source,
+    starts_on,
+    expires_on,
+    expiry_mode,
+    removal_protected,
+    migration_review
+  ) values (
+    p_member_id,
+    'paid',
+    'phase2_admin_reactivation',
+    p_reactivation_start,
+    v_new_expiry,
+    'fixed',
+    false,
+    false
+  ) returning id into v_new_period_id;
+
+  insert into public.payments (
+    member_id,
+    membership_period_id,
+    amount,
+    currency,
+    tx_hash,
+    status,
+    verification_method,
+    received_at,
+    verified_at,
+    verified_by,
+    notes
+  ) values (
+    p_member_id,
+    v_new_period_id,
+    p_amount,
+    v_currency,
+    v_tx_hash,
+    'verified',
+    'manual',
+    ((p_payment_date::timestamp + time '12:00') at time zone 'Europe/London'),
+    now(),
+    v_actor,
+    v_payment_note
+  ) returning id into v_payment_id;
+
+  insert into public.membership_events (
+    member_id,
+    membership_period_id,
+    event_type,
+    old_expiry,
+    new_expiry,
+    adjustment_value,
+    adjustment_unit,
+    reason,
+    actor_type,
+    actor_id,
+    metadata
+  ) values (
+    p_member_id,
+    v_new_period_id,
+    'MEMBERSHIP_REACTIVATED',
+    v_latest_expiry,
+    v_new_expiry,
+    p_duration_value,
+    p_duration_unit,
+    v_reason,
+    'admin',
+    v_actor,
+    jsonb_build_object(
+      'previous_membership_period_id', v_latest_id,
+      'previous_expiry', v_latest_expiry,
+      'reactivation_start', p_reactivation_start,
+      'payment_id', v_payment_id,
+      'amount', p_amount,
+      'currency', v_currency,
+      'payment_date', p_payment_date,
+      'tx_hash', v_tx_hash,
+      'duration_value', p_duration_value,
+      'duration_unit', p_duration_unit
+    )
+  ) returning id into v_event_id;
+
+  insert into public.audit_log (
+    actor_type, actor_id, action, entity_type, entity_id,
+    before_data, after_data, reason
+  ) values (
+    'admin', v_actor, 'MEMBERSHIP_REACTIVATED', 'member', p_member_id::text,
+    jsonb_build_object(
+      'latest_membership_period_id', v_latest_id,
+      'latest_expiry', v_latest_expiry
+    ),
+    jsonb_build_object(
+      'new_membership_period_id', v_new_period_id,
+      'starts_on', p_reactivation_start,
+      'expires_on', v_new_expiry,
+      'payment_id', v_payment_id
+    ),
+    v_reason
+  );
+
+  return query select p_member_id, v_new_period_id, v_latest_expiry, v_new_expiry, v_payment_id, v_event_id;
+end;
+$$;
+
+create or replace function public.admin_correct_membership_period(
+  p_member_id uuid,
+  p_period_id uuid,
+  p_expected jsonb,
+  p_proposed jsonb,
+  p_reason text,
+  p_actor_id text
+) returns table(membership_period_id uuid, event_id uuid)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_period public.membership_periods%rowtype;
+  v_current jsonb;
+  v_entitlement_type text;
+  v_plan_name text;
+  v_starts_on date;
+  v_expires_on date;
+  v_expiry_mode text;
+  v_removal_protected boolean;
+  v_protection_reason text;
+  v_ended_early_on date;
+  v_admin_note text;
+  v_reason text;
+  v_actor text;
+  v_before jsonb := '{}'::jsonb;
+  v_after jsonb := '{}'::jsonb;
+  v_interval_changed boolean := false;
+  v_event_id uuid;
+  v_text text;
+  v_safeguarding_state public.member_safeguarding_state%rowtype;
+  v_status_before text;
+  v_status_after text;
+  v_safeguarding_event_id uuid;
+  v_state_before jsonb;
+  v_state_after jsonb;
+begin
+  if p_member_id is null or p_period_id is null or p_expected is null or p_proposed is null
+     or jsonb_typeof(p_expected)<>'object' or jsonb_typeof(p_proposed)<>'object' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if not (p_expected ?& array[
+    'entitlement_type','plan_name','starts_on','expires_on','expiry_mode',
+    'removal_protected','protection_reason','ended_early_on','admin_note'
+  ]) or not (p_proposed ?& array[
+    'entitlement_type','plan_name','starts_on','expires_on','expiry_mode',
+    'removal_protected','protection_reason','ended_early_on','admin_note'
+  ]) or (select count(*) from jsonb_object_keys(p_expected))<>9
+     or (select count(*) from jsonb_object_keys(p_proposed))<>9 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_reason := btrim(coalesce(p_reason,''));
+  v_actor := coalesce(nullif(btrim(p_actor_id),''),'vip-admin');
+  if v_reason='' or char_length(v_reason)>500 or char_length(v_actor)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  select ss.* into v_safeguarding_state
+  from public.member_safeguarding_state ss
+  where ss.member_id=p_member_id
+  for update;
+  if not found then raise exception using errcode='P0001', message='SAFEGUARDING_STATE_MISSING'; end if;
+  v_state_before:=to_jsonb(v_safeguarding_state);
+  select cms.status into v_status_before
+  from public.current_member_status cms where cms.member_id=p_member_id limit 1;
+
+  select mp.* into v_period from public.membership_periods mp
+  where mp.id=p_period_id and mp.member_id=p_member_id for update;
+  if not found then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  v_current := jsonb_build_object(
+    'entitlement_type',v_period.entitlement_type,'plan_name',v_period.plan_name,
+    'starts_on',v_period.starts_on,'expires_on',v_period.expires_on,
+    'expiry_mode',v_period.expiry_mode,'removal_protected',v_period.removal_protected,
+    'protection_reason',v_period.protection_reason,'ended_early_on',v_period.ended_early_on,
+    'admin_note',v_period.admin_note
+  );
+  if v_current is distinct from p_expected then
+    raise exception using errcode='P0001', message='STALE_PREVIEW';
+  end if;
+
+  v_entitlement_type := lower(btrim(coalesce(p_proposed->>'entitlement_type','')));
+  if v_entitlement_type not in ('paid','complimentary','trial','lifetime','admin') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_plan_name := nullif(btrim(coalesce(p_proposed->>'plan_name','')),'');
+  if v_plan_name is not null and char_length(v_plan_name)>200 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_expiry_mode := lower(btrim(coalesce(p_proposed->>'expiry_mode','')));
+  if v_expiry_mode not in ('fixed','lifetime','manual_no_expiry') then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if jsonb_typeof(p_proposed->'removal_protected')<>'boolean' then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  v_removal_protected := (p_proposed->>'removal_protected')::boolean;
+  v_protection_reason := nullif(btrim(coalesce(p_proposed->>'protection_reason','')),'');
+  if v_protection_reason is not null and char_length(v_protection_reason)>500 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_removal_protected and v_protection_reason is null then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  elsif not v_removal_protected then
+    v_protection_reason := null;
+  end if;
+  v_admin_note := nullif(btrim(coalesce(p_proposed->>'admin_note','')),'');
+  if v_admin_note is not null and char_length(v_admin_note)>4000 then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_proposed->>'starts_on','')),'');
+  if v_text is not null then
+    if v_text !~ '^\d{4}-\d{2}-\d{2}$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_starts_on := v_text::date;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_starts_on::text<>v_text then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_proposed->>'expires_on','')),'');
+  if v_text is not null then
+    if v_text !~ '^\d{4}-\d{2}-\d{2}$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_expires_on := v_text::date;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_expires_on::text<>v_text then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  v_text := nullif(btrim(coalesce(p_proposed->>'ended_early_on','')),'');
+  if v_text is not null then
+    if v_text !~ '^\d{4}-\d{2}-\d{2}$' then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+    begin v_ended_early_on := v_text::date;
+    exception when others then raise exception using errcode='P0001', message='INVALID_INPUT'; end;
+    if v_ended_early_on::text<>v_text then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+  end if;
+
+  if v_expiry_mode<>'fixed' and v_expires_on is not null then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_starts_on is not null and v_expires_on is not null and v_expires_on<=v_starts_on then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_ended_early_on is not null and v_starts_on is not null and v_ended_early_on<v_starts_on then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+  if v_ended_early_on is not null and v_expires_on is not null and v_ended_early_on>v_expires_on then
+    raise exception using errcode='P0001', message='INVALID_INPUT';
+  end if;
+
+  if v_period.entitlement_type is distinct from v_entitlement_type then
+    v_before:=v_before||jsonb_build_object('entitlement_type',v_period.entitlement_type);
+    v_after:=v_after||jsonb_build_object('entitlement_type',v_entitlement_type);
+  end if;
+  if v_period.plan_name is distinct from v_plan_name then
+    v_before:=v_before||jsonb_build_object('plan_name',v_period.plan_name);
+    v_after:=v_after||jsonb_build_object('plan_name',v_plan_name);
+  end if;
+  if v_period.starts_on is distinct from v_starts_on then
+    v_before:=v_before||jsonb_build_object('starts_on',v_period.starts_on);
+    v_after:=v_after||jsonb_build_object('starts_on',v_starts_on);
+    v_interval_changed:=true;
+  end if;
+  if v_period.expires_on is distinct from v_expires_on then
+    v_before:=v_before||jsonb_build_object('expires_on',v_period.expires_on);
+    v_after:=v_after||jsonb_build_object('expires_on',v_expires_on);
+    v_interval_changed:=true;
+  end if;
+  if v_period.expiry_mode is distinct from v_expiry_mode then
+    v_before:=v_before||jsonb_build_object('expiry_mode',v_period.expiry_mode);
+    v_after:=v_after||jsonb_build_object('expiry_mode',v_expiry_mode);
+    v_interval_changed:=true;
+  end if;
+  if v_period.removal_protected is distinct from v_removal_protected then
+    v_before:=v_before||jsonb_build_object('removal_protected',v_period.removal_protected);
+    v_after:=v_after||jsonb_build_object('removal_protected',v_removal_protected);
+  end if;
+  if v_period.protection_reason is distinct from v_protection_reason then
+    v_before:=v_before||jsonb_build_object('protection_reason',v_period.protection_reason);
+    v_after:=v_after||jsonb_build_object('protection_reason',v_protection_reason);
+  end if;
+  if v_period.ended_early_on is distinct from v_ended_early_on then
+    v_before:=v_before||jsonb_build_object('ended_early_on',v_period.ended_early_on);
+    v_after:=v_after||jsonb_build_object('ended_early_on',v_ended_early_on);
+    v_interval_changed:=true;
+  end if;
+  if v_period.admin_note is distinct from v_admin_note then
+    v_before:=v_before||jsonb_build_object('admin_note',v_period.admin_note);
+    v_after:=v_after||jsonb_build_object('admin_note',v_admin_note);
+  end if;
+
+  if v_before='{}'::jsonb then raise exception using errcode='P0001', message='INVALID_INPUT'; end if;
+
+  if v_interval_changed and exists (
+    select 1 from public.membership_periods other
+    where other.member_id=p_member_id and other.id<>p_period_id
+      and coalesce(other.starts_on,'-infinity'::date)
+          <= coalesce(v_ended_early_on,v_expires_on,'infinity'::date)
+      and coalesce(other.ended_early_on,other.expires_on,'infinity'::date)
+          >= coalesce(v_starts_on,'-infinity'::date)
+  ) then raise exception using errcode='P0001', message='OVERLAPPING_ENTITLEMENT'; end if;
+
+  update public.membership_periods
+  set entitlement_type=v_entitlement_type,
+      plan_name=v_plan_name,
+      starts_on=v_starts_on,
+      expires_on=v_expires_on,
+      expiry_mode=v_expiry_mode,
+      removal_protected=v_removal_protected,
+      protection_reason=v_protection_reason,
+      ended_early_on=v_ended_early_on,
+      admin_note=v_admin_note,
+      note_updated_at=case when v_period.admin_note is distinct from v_admin_note then now() else note_updated_at end,
+      note_updated_by=case when v_period.admin_note is distinct from v_admin_note then v_actor else note_updated_by end
+  where id=p_period_id;
+
+  select cms.status into v_status_after
+  from public.current_member_status cms where cms.member_id=p_member_id limit 1;
+
+  insert into public.membership_events(
+    member_id,membership_period_id,event_type,old_expiry,new_expiry,reason,
+    actor_type,actor_id,metadata
+  ) values (
+    p_member_id,p_period_id,'MEMBERSHIP_PERIOD_CORRECTED',
+    case when v_period.expires_on is distinct from v_expires_on then v_period.expires_on else null end,
+    case when v_period.expires_on is distinct from v_expires_on then v_expires_on else null end,
+    v_reason,'admin',v_actor,jsonb_build_object('before',v_before,'after',v_after)
+  ) returning id into v_event_id;
+
+  insert into public.audit_log(
+    actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+  ) values (
+    'admin',v_actor,'MEMBERSHIP_PERIOD_CORRECTED','membership_period',p_period_id::text,
+    v_before,v_after,v_reason
+  );
+
+  if v_safeguarding_state.ever_blocked
+     and not v_safeguarding_state.is_blocked
+     and v_status_before='FORMER'
+     and v_status_after in ('ACTIVE','LIFETIME') then
+    update public.member_safeguarding_state ss
+    set access_restoration_required=true,version=ss.version+1,updated_at=now()
+    where ss.member_id=p_member_id
+    returning to_jsonb(ss) into v_state_after;
+
+    insert into public.member_safeguarding_events(
+      member_id,event_type,actor_id,reason,metadata
+    ) values (
+      p_member_id,'ACCESS_RESTORATION_REQUIRED',v_actor,
+      'Factual entitlement correction requires a separate Restore Access decision.',
+      jsonb_build_object(
+        'membership_period_id',p_period_id,
+        'membership_correction_event_id',v_event_id,
+        'before_status',v_status_before,'after_status',v_status_after
+      )
+    ) returning id into v_safeguarding_event_id;
+
+    insert into public.audit_log(
+      actor_type,actor_id,action,entity_type,entity_id,before_data,after_data,reason
+    ) values (
+      'admin',v_actor,'ACCESS_RESTORATION_REQUIRED','member_safeguarding_state',p_member_id::text,
+      v_state_before,v_state_after,
+      'Factual entitlement correction requires a separate Restore Access decision.'
+    );
+  end if;
+
+  return query select p_period_id,v_event_id;
+end;
+$$;
