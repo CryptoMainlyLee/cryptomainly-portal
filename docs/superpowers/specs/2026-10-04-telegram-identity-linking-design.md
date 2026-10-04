@@ -1,7 +1,7 @@
 # CryptoMainly Phase 3A — Verified Telegram Identity Linking Design
 
 Date: 2026-10-04
-Status: Drafted from approved design; awaiting written-spec review
+Status: Approved 2026-10-04
 
 ## Purpose
 
