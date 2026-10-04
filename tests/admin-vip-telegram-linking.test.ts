@@ -73,3 +73,48 @@ test("credential helper rejects unsafe bot usernames without echoing bearer mate
   assert.throws(() => api.createTelegramLinkCredential("https://t.me/not-a-name"), /bot username/i);
   assert.throws(() => api.hashTelegramLinkToken("not a telegram start token"), /token/i);
 });
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+function dataSource() {
+  return readFileSync(join(process.cwd(), "app", "admin", "vip", "_lib", "data.ts"), "utf8");
+}
+
+test("Telegram server boundary exposes metadata-only pending-link and consume result types", () => {
+  const source = dataSource();
+  assert.match(source, /export type TelegramPendingLink = \{[\s\S]*token_id: string;[\s\S]*member_id: string;[\s\S]*issued_at: string;[\s\S]*expires_at: string;[\s\S]*\};/);
+  assert.match(source, /export type TelegramConsumeResult = \{[\s\S]*result_code: string;[\s\S]*member_id: string \| null;[\s\S]*telegram_account_id: string \| null;[\s\S]*linked_at: string \| null;[\s\S]*replayed: boolean;[\s\S]*\};/);
+  assert.doesNotMatch(source, /export type TelegramPendingLink = \{[^}]*token_hash/s);
+});
+
+test("Telegram pending-link helper uses metadata RPC and never reads token hashes directly", () => {
+  const source = dataSource();
+  assert.match(source, /export async function getPendingTelegramLink\(memberId: string\)/);
+  assert.match(source, /rpc\/admin_get_telegram_link_status/);
+  const start = source.indexOf("export async function getPendingTelegramLink");
+  const end = source.indexOf("export async function issueTelegramLinkToken", start);
+  assert.ok(start >= 0 && end > start);
+  assert.doesNotMatch(source.slice(start, end), /token_hash|telegram_link_tokens\?/);
+});
+
+test("Telegram issuance wrapper sends only member, expected safeguarding version, hash and actor", () => {
+  const source = dataSource();
+  const start = source.indexOf("export async function issueTelegramLinkToken");
+  const end = source.indexOf("export async function consumeTelegramIdentityLink", start);
+  assert.ok(start >= 0 && end > start);
+  const body = source.slice(start, end);
+  assert.match(body, /rpc\/admin_issue_telegram_link_token/);
+  for (const key of ["p_member_id", "p_expected_safeguarding_version", "p_token_hash", "p_actor_id"]) assert.match(body, new RegExp(key));
+  assert.doesNotMatch(body, /rawToken|deepLink/);
+});
+
+test("Telegram consume wrapper preserves authoritative business result codes", () => {
+  const source = dataSource();
+  const start = source.indexOf("export async function consumeTelegramIdentityLink");
+  assert.ok(start >= 0);
+  const body = source.slice(start);
+  assert.match(body, /rpc\/telegram_consume_identity_link/);
+  for (const key of ["p_token_hash", "p_update_id", "p_telegram_user_id", "p_telegram_username"]) assert.match(body, new RegExp(key));
+  assert.match(body, /TelegramConsumeResult\[\]/);
+});

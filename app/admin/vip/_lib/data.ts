@@ -20,6 +20,10 @@ import {
   safeguardingStateForPolicy,
   type SafeguardingRpcErrorCode,
 } from "./safeguarding";
+import {
+  telegramLinkRpcErrorCodeFromDetail,
+  type TelegramLinkRpcErrorCode,
+} from "./telegram-linking";
 
 export type MemberOverview = {
   member_id: string;
@@ -199,6 +203,27 @@ export type MemberTelegramAccount = {
   created_at: string;
 };
 
+export type TelegramPendingLink = {
+  token_id: string;
+  member_id: string;
+  issued_at: string;
+  expires_at: string;
+};
+
+export type TelegramConsumeResult = {
+  result_code: string;
+  member_id: string | null;
+  telegram_account_id: string | null;
+  linked_at: string | null;
+  replayed: boolean;
+};
+
+type TelegramIssueResult = {
+  token_id: string;
+  expires_at: string;
+  revoked_count: number;
+};
+
 export type MemberReviewCase = {
   id: string;
   member_id: string;
@@ -262,7 +287,8 @@ export type MembershipActionErrorCode =
   | "OVERLAPPING_ENTITLEMENT"
   | EditingRpcErrorCode
   | NewMemberRpcErrorCode
-  | SafeguardingRpcErrorCode;
+  | SafeguardingRpcErrorCode
+  | TelegramLinkRpcErrorCode;
 
 export class MembershipActionError extends Error {
   code: MembershipActionErrorCode;
@@ -301,6 +327,9 @@ function actionErrorFromDetail(detail: string): MembershipActionError | null {
 
   const safeguardingCode = safeguardingRpcErrorCodeFromDetail(detail);
   if (safeguardingCode) return new MembershipActionError(safeguardingCode);
+
+  const telegramLinkCode = telegramLinkRpcErrorCodeFromDetail(detail);
+  if (telegramLinkCode) return new MembershipActionError(telegramLinkCode);
 
   const codes: MembershipActionErrorCode[] = [
     "PAST_EXPIRY_ACK_REQUIRED",
@@ -546,6 +575,52 @@ export async function getMemberTelegramAccounts(memberId: string) {
       memberId
     )}&order=created_at.asc`
   );
+}
+
+export async function getPendingTelegramLink(memberId: string) {
+  const rows = await supabaseRest<TelegramPendingLink[]>("rpc/admin_get_telegram_link_status", {
+    method: "POST",
+    body: { p_member_id: memberId },
+  });
+  return rows?.[0] ?? null;
+}
+
+export async function issueTelegramLinkToken(input: {
+  memberId: string;
+  expectedSafeguardingVersion: number;
+  tokenHash: string;
+  actorId?: string;
+}) {
+  const rows = await supabaseRest<TelegramIssueResult[]>("rpc/admin_issue_telegram_link_token", {
+    method: "POST",
+    body: {
+      p_member_id: input.memberId,
+      p_expected_safeguarding_version: input.expectedSafeguardingVersion,
+      p_token_hash: input.tokenHash,
+      p_actor_id: input.actorId ?? "vip-admin",
+    },
+  });
+  if (!rows?.[0]) throw new Error("Telegram link issuance returned no result.");
+  return rows[0];
+}
+
+export async function consumeTelegramIdentityLink(input: {
+  tokenHash: string;
+  updateId: number;
+  telegramUserId: number;
+  telegramUsername: string | null;
+}) {
+  const rows = await supabaseRest<TelegramConsumeResult[]>("rpc/telegram_consume_identity_link", {
+    method: "POST",
+    body: {
+      p_token_hash: input.tokenHash,
+      p_update_id: input.updateId,
+      p_telegram_user_id: input.telegramUserId,
+      p_telegram_username: input.telegramUsername,
+    },
+  });
+  if (!rows?.[0]) throw new Error("Telegram link consumption returned no result.");
+  return rows[0];
 }
 
 export async function getMemberReviewCases(memberId: string) {
