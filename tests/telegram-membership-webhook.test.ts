@@ -17,6 +17,13 @@ try {
   bot = null;
 }
 
+let operations: typeof import("../scripts/configure-telegram-membership-webhook.mjs") | null = null;
+try {
+  operations = await import("../scripts/configure-telegram-membership-webhook.mjs");
+} catch {
+  operations = null;
+}
+
 function api() {
   assert.ok(webhook, "Telegram membership webhook helpers must exist");
   return webhook;
@@ -338,4 +345,78 @@ test("Vercel webhook route exposes POST only and contains no secret/body logging
   assert.doesNotMatch(source, /console\.(?:log|error|warn)/);
   assert.doesNotMatch(source, /searchParams|[?&]secret=|get\(["']secret["']\)/i);
   assert.doesNotMatch(source, /banChatMember|unbanChatMember|createChatInviteLink|approveChatJoinRequest/);
+});
+
+
+function operationsApi() {
+  assert.ok(operations, "Telegram webhook operations script must exist");
+  return operations;
+}
+
+test("operator summary exposes configuration state without either Telegram secret", () => {
+  const summary = operationsApi().redactedWebhookConfigSummary({
+    webhookUrl: "https://preview.example.com/api/telegram/webhook",
+    botToken: "123:BOT_SECRET_VALUE",
+    webhookSecret: "Webhook_SECRET_VALUE",
+  });
+  const serialized = JSON.stringify(summary);
+  assert.match(serialized, /preview\.example\.com/);
+  assert.match(serialized, /message/);
+  assert.doesNotMatch(serialized, /BOT_SECRET_VALUE|Webhook_SECRET_VALUE|123:/);
+});
+
+test("configure operation calls setWebhook then getWebhookInfo and verifies exact target", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith("/setWebhook")) {
+      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      ok: true,
+      result: { url: "https://preview.example.com/api/telegram/webhook", allowed_updates: ["message"] },
+    }), { status: 200 });
+  };
+  const result = await operationsApi().configureTelegramMembershipWebhook({
+    webhookUrl: "https://preview.example.com/api/telegram/webhook",
+    botToken: "123:BOT_SECRET_VALUE",
+    webhookSecret: "Webhook_SECRET_VALUE",
+    fetchImpl,
+  });
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /\/setWebhook$/);
+  assert.match(calls[1].url, /\/getWebhookInfo$/);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+    url: "https://preview.example.com/api/telegram/webhook",
+    secret_token: "Webhook_SECRET_VALUE",
+    allowed_updates: ["message"],
+  });
+  assert.deepEqual(result, { webhookUrl: "https://preview.example.com/api/telegram/webhook", allowedUpdates: ["message"], verified: true });
+});
+
+test("delete operation removes the webhook and verifies the target is empty", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith("/deleteWebhook")) {
+      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true, result: { url: "", allowed_updates: ["message"] } }), { status: 200 });
+  };
+  const result = await operationsApi().deleteTelegramMembershipWebhook({
+    botToken: "123:BOT_SECRET_VALUE",
+    fetchImpl,
+  });
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url, /\/deleteWebhook$/);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { drop_pending_updates: false });
+  assert.match(calls[1].url, /\/getWebhookInfo$/);
+  assert.deepEqual(result, { webhookUrl: "", removed: true });
+});
+
+test("operations CLI supports secret-safe --delete rollback mode", () => {
+  const source = readFileSync(join(process.cwd(), "scripts", "configure-telegram-membership-webhook.mjs"), "utf8");
+  assert.match(source, /process\.argv\.includes\(["']--delete["']\)/);
+  assert.match(source, /deleteTelegramMembershipWebhook/);
+  assert.doesNotMatch(source, /console\.log\([^\n]*(?:botToken|webhookSecret)/);
 });
