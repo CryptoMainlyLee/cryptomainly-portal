@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 let webhook: typeof import("../app/api/telegram/_lib/telegram-webhook.ts") | null = null;
 try {
@@ -304,4 +306,36 @@ test("handler fails closed when the server webhook secret is missing", async () 
   );
   assert.deepEqual(result, { status: 500, kind: "server_error" });
   assert.equal(consumeCount, 0);
+});
+
+
+function webhookRouteSource() {
+  try {
+    return readFileSync(join(process.cwd(), "app", "api", "telegram", "webhook", "route.ts"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+test("Vercel webhook route authenticates from Telegram header and delegates status mapping", () => {
+  const source = webhookRouteSource();
+  assert.ok(source.length > 0, "Telegram webhook route must exist");
+  assert.match(source, /X-Telegram-Bot-Api-Secret-Token/i);
+  assert.match(source, /TELEGRAM_MEMBERSHIP_WEBHOOK_SECRET/);
+  assert.match(source, /TELEGRAM_MEMBERSHIP_BOT_TOKEN/);
+  assert.match(source, /request\.text\(\)/);
+  assert.doesNotMatch(source, /request\.json\(\)/);
+  assert.match(source, /handleTelegramMembershipWebhook/);
+  assert.match(source, /consumeTelegramIdentityLink/);
+  assert.match(source, /sendTelegramBotMessage/);
+  assert.match(source, /status:\s*result\.status/);
+});
+
+test("Vercel webhook route exposes POST only and contains no secret/body logging or group management", () => {
+  const source = webhookRouteSource();
+  assert.match(source, /export async function POST\(/);
+  assert.doesNotMatch(source, /export (?:async )?function (?:GET|PUT|PATCH|DELETE)\(/);
+  assert.doesNotMatch(source, /console\.(?:log|error|warn)/);
+  assert.doesNotMatch(source, /searchParams|[?&]secret=|get\(["']secret["']\)/i);
+  assert.doesNotMatch(source, /banChatMember|unbanChatMember|createChatInviteLink|approveChatJoinRequest/);
 });
