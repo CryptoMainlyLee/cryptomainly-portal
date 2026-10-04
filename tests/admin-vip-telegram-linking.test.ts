@@ -118,3 +118,52 @@ test("Telegram consume wrapper preserves authoritative business result codes", (
   for (const key of ["p_token_hash", "p_update_id", "p_telegram_user_id", "p_telegram_username"]) assert.match(body, new RegExp(key));
   assert.match(body, /TelegramConsumeResult\[\]/);
 });
+
+function actionsSource() {
+  return readFileSync(join(process.cwd(), "app", "admin", "vip", "actions.ts"), "utf8");
+}
+
+function memberPageSource() {
+  return readFileSync(join(process.cwd(), "app", "admin", "vip", "[memberId]", "page.tsx"), "utf8");
+}
+
+test("Telegram link generation action requires admin auth and keeps raw credential ephemeral", () => {
+  const source = actionsSource();
+  const start = source.indexOf("export async function generateTelegramLinkAction");
+  assert.ok(start >= 0, "generateTelegramLinkAction must exist");
+  const body = source.slice(start, start + 2600);
+  assert.match(body, /await requireAdminSession\(\)/);
+  assert.match(body, /TELEGRAM_MEMBERSHIP_BOT_USERNAME/);
+  assert.match(body, /createTelegramLinkCredential/);
+  assert.match(body, /issueTelegramLinkToken/);
+  assert.match(body, /expectedSafeguardingVersion/);
+  assert.match(body, /credential\.tokenHash/);
+  assert.match(body, /deepLink: credential\.deepLink/);
+  assert.doesNotMatch(body, /console\.(log|error|warn)[\s\S]*credential/);
+  assert.doesNotMatch(source, /NEXT_PUBLIC_TELEGRAM_MEMBERSHIP/);
+});
+
+test("member page loads pending Telegram link metadata and renders dedicated linking panel", () => {
+  const source = memberPageSource();
+  assert.match(source, /getPendingTelegramLink/);
+  assert.match(source, /<TelegramLinkingPanel/);
+  assert.match(source, /pendingExpiresAt=/);
+  assert.match(source, /safeguardingVersion=/);
+  assert.match(source, /telegramUserId=/);
+});
+
+test("Telegram linking panel preserves identity/access separation and sensitive link rules", () => {
+  const path = join(process.cwd(), "app", "admin", "vip", "[memberId]", "TelegramLinkingPanel.tsx");
+  let source = "";
+  try { source = readFileSync(path, "utf8"); } catch { source = ""; }
+  assert.match(source, /Not linked/);
+  assert.match(source, /Link pending/);
+  assert.match(source, /Verified/);
+  assert.match(source, /Unavailable/);
+  assert.match(source, /Generate Telegram Link/);
+  assert.match(source, /Generate replacement/);
+  assert.match(source, /Copy Link/);
+  assert.match(source, /Open Bot/);
+  assert.match(source, /VIP group access: Not managed by Phase 3A/);
+  assert.match(source, /sensitive|bearer/i);
+});

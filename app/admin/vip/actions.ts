@@ -18,6 +18,7 @@ import {
   correctPayment,
   createNewMember,
   findMemberIdentityConflict,
+  issueTelegramLinkToken,
   MembershipActionError,
   openReviewCase,
   reactivateMembership,
@@ -70,6 +71,11 @@ import {
   validateSafeguardingSummary,
   validateTelegramRemovalOutcome,
 } from "./_lib/safeguarding";
+import {
+  createTelegramLinkCredential,
+  telegramLinkActionFailureForCode,
+  type TelegramLinkRpcErrorCode,
+} from "./_lib/telegram-linking";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -850,4 +856,63 @@ export async function completeSafeguardingTaskAction(input: {
     await completeSafeguardingTask({ memberId, taskId, outcome, note, actorId: "vip-admin" });
     revalidateMemberPages(memberId); return { ok: true } as const;
   } catch (error) { return safeguardingFailure(error); }
+}
+
+
+export async function generateTelegramLinkAction(input: {
+  memberId: string;
+  expectedSafeguardingVersion: number;
+}) {
+  await requireAdminSession();
+
+  if (
+    !UUID_PATTERN.test(input.memberId) ||
+    !Number.isSafeInteger(input.expectedSafeguardingVersion) ||
+    input.expectedSafeguardingVersion < 0
+  ) {
+    return {
+      ok: false as const,
+      code: "INVALID_INPUT" as const,
+      message: "Telegram linking could not be started. Refresh the member record and try again.",
+    };
+  }
+
+  const botUsername = process.env.TELEGRAM_MEMBERSHIP_BOT_USERNAME;
+  if (!botUsername) {
+    return {
+      ok: false as const,
+      code: "SERVER_ERROR" as const,
+      message: "Telegram linking is not configured yet.",
+    };
+  }
+
+  let credential;
+  try {
+    credential = createTelegramLinkCredential(botUsername);
+  } catch {
+    return {
+      ok: false as const,
+      code: "SERVER_ERROR" as const,
+      message: "Telegram linking is not configured yet.",
+    };
+  }
+
+  try {
+    const result = await issueTelegramLinkToken({
+      memberId: input.memberId,
+      expectedSafeguardingVersion: input.expectedSafeguardingVersion,
+      tokenHash: credential.tokenHash,
+    });
+    revalidatePath(`/admin/vip/${input.memberId}`);
+    return {
+      ok: true as const,
+      deepLink: credential.deepLink,
+      expiresAt: result.expires_at,
+    };
+  } catch (error) {
+    if (error instanceof MembershipActionError) {
+      return telegramLinkActionFailureForCode(error.code as TelegramLinkRpcErrorCode);
+    }
+    return telegramLinkActionFailureForCode(null);
+  }
 }

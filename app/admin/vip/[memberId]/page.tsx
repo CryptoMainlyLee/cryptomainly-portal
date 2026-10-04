@@ -6,6 +6,7 @@ import {
   getMemberHistory,
   getMemberPayments,
   getMemberPeriods,
+  getPendingTelegramLink,
   getMemberReviewCases,
   getMemberSafeguardingEvents,
   getMemberSafeguardingTasks,
@@ -13,10 +14,12 @@ import {
   type MemberHistory,
 } from "../_lib/data";
 import { membershipEventTitle } from "../_lib/membership-actions";
+import { telegramLinkUiState } from "../_lib/telegram-linking";
 import MembershipActions from "./MembershipActions";
 import SafeguardingPanel from "./SafeguardingPanel";
 import MemberDetailsEditor from "./MemberDetailsEditor";
 import TelegramUsernameEditor from "./TelegramUsernameEditor";
+import TelegramLinkingPanel from "./TelegramLinkingPanel";
 import MembershipPeriodEditor from "./MembershipPeriodEditor";
 import PaymentEditor from "./PaymentEditor";
 import ReviewCasesPanel from "./ReviewCasesPanel";
@@ -164,12 +167,13 @@ export default async function MemberDetail({ params, searchParams }: Props) {
     redirect("/admin/vip/login");
   }
 
-  const [member, periods, history, payments, telegramAccounts, reviewCases, safeguardingEvents, safeguardingTasks] = await Promise.all([
+  const [member, periods, history, payments, telegramAccounts, pendingLink, reviewCases, safeguardingEvents, safeguardingTasks] = await Promise.all([
     getMember(params.memberId),
     getMemberPeriods(params.memberId),
     getMemberHistory(params.memberId),
     getMemberPayments(params.memberId),
     getMemberTelegramAccounts(params.memberId),
+    getPendingTelegramLink(params.memberId),
     getMemberReviewCases(params.memberId),
     getMemberSafeguardingEvents(params.memberId),
     getMemberSafeguardingTasks(params.memberId),
@@ -185,6 +189,17 @@ export default async function MemberDetail({ params, searchParams }: Props) {
       ? currentPeriod ?? periods.find((period) => period.period_status === "HISTORICAL") ?? null
       : periods.find((period) => period.period_status === "HISTORICAL") ?? null;
   const todayLondon = londonToday();
+  const telegramState = telegramLinkUiState({
+    membershipStatus: member.status,
+    isBlocked: member.is_blocked,
+    telegramUserId: member.telegram_user_id,
+    pendingExpiresAt: pendingLink?.expires_at ?? null,
+  });
+  const telegramUnavailableReason = member.is_blocked
+    ? "Telegram identity linking is unavailable while this member is Blocked."
+    : member.status === "FORMER"
+      ? "Telegram identity linking is available only for a current ACTIVE or LIFETIME member."
+      : null;
 
   return (
     <main className="min-h-screen bg-[#07111f] text-slate-100">
@@ -298,6 +313,16 @@ export default async function MemberDetail({ params, searchParams }: Props) {
             </dl>
           </div>
         </section>
+
+        <TelegramLinkingPanel
+          memberId={member.member_id}
+          safeguardingVersion={member.safeguarding_version}
+          state={telegramState}
+          pendingExpiresAt={pendingLink?.expires_at ?? null}
+          telegramUserId={member.telegram_user_id}
+          telegramUsername={member.telegram_username}
+          unavailableReason={telegramUnavailableReason}
+        />
 
         <MemberDetailsEditor
           memberId={member.member_id}
