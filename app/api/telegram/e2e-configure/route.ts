@@ -16,12 +16,15 @@ async function telegramJson(response: Response) {
   return payload;
 }
 
-export async function POST(request: Request): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   if (process.env.VERCEL_ENV !== "preview") return noStore(404);
+  if (process.env.VERCEL_GIT_COMMIT_REF !== "feature/telegram-identity-linking-2026-10-04") {
+    return noStore(404);
+  }
 
   const operatorSecret = process.env.E2E_TELEGRAM_OPERATOR_SECRET;
-  const authorization = request.headers.get("authorization");
-  if (!operatorSecret || authorization !== `Bearer ${operatorSecret}`) {
+  const requestKey = new URL(request.url).searchParams.get("key");
+  if (!operatorSecret || requestKey !== operatorSecret) {
     return noStore(401);
   }
 

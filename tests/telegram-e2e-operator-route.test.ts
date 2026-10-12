@@ -11,7 +11,8 @@ const source = readFileSync(
 test("temporary Telegram E2E operator is preview-only and secret-protected", () => {
   assert.match(source, /process\.env\.VERCEL_ENV\s*!==\s*["']preview["']/);
   assert.match(source, /E2E_TELEGRAM_OPERATOR_SECRET/);
-  assert.match(source, /authorization/i);
+  assert.match(source, /VERCEL_GIT_COMMIT_REF/);
+  assert.match(source, /searchParams\.get\(["']key["']\)/);
   assert.match(source, /TELEGRAM_MEMBERSHIP_BOT_TOKEN/);
   assert.match(source, /TELEGRAM_MEMBERSHIP_WEBHOOK_SECRET/);
   assert.match(source, /buildTelegramWebhookRegistration/);
