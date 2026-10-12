@@ -30,10 +30,15 @@ export async function GET(request: Request): Promise<Response> {
 
   const token = process.env.TELEGRAM_MEMBERSHIP_BOT_TOKEN;
   const secret = process.env.TELEGRAM_MEMBERSHIP_WEBHOOK_SECRET;
-  if (!token || !secret) return noStore(500);
+  const protectionBypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (!token || !secret || !protectionBypass) return noStore(500);
 
-  const webhookUrl = new URL("/api/telegram/webhook", request.url).toString();
-  const registration = buildTelegramWebhookRegistration(webhookUrl, secret);
+  const webhookUrl = new URL("/api/telegram/webhook", request.url);
+  webhookUrl.searchParams.set("x-vercel-protection-bypass", protectionBypass);
+  const registration = {
+    ...buildTelegramWebhookRegistration(webhookUrl.toString(), secret),
+    drop_pending_updates: true,
+  };
 
   try {
     const setResponse = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
@@ -64,7 +69,6 @@ export async function GET(request: Request): Promise<Response> {
 
     return noStore(200, {
       verified: true,
-      webhookUrl: actualUrl,
       allowedUpdates: ["message"],
     });
   } catch {

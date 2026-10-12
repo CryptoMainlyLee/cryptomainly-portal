@@ -15,6 +15,9 @@ test("temporary Telegram E2E operator is preview-only and secret-protected", () 
   assert.match(source, /searchParams\.get\(["']key["']\)/);
   assert.match(source, /TELEGRAM_MEMBERSHIP_BOT_TOKEN/);
   assert.match(source, /TELEGRAM_MEMBERSHIP_WEBHOOK_SECRET/);
+  assert.match(source, /VERCEL_AUTOMATION_BYPASS_SECRET/);
+  assert.match(source, /x-vercel-protection-bypass/);
+  assert.match(source, /drop_pending_updates/);
   assert.match(source, /buildTelegramWebhookRegistration/);
   assert.match(source, /actualUpdates\[0\]\s*!==\s*["']message["']/);
   assert.doesNotMatch(source, /telegram_group_access/);
@@ -23,8 +26,8 @@ test("temporary Telegram E2E operator is preview-only and secret-protected", () 
 
 test("temporary operator returns only redacted webhook verification metadata", () => {
   assert.match(source, /verified:/);
-  assert.match(source, /webhookUrl:/);
   assert.match(source, /allowedUpdates:/);
+  assert.doesNotMatch(source, /webhookUrl:/);
   assert.doesNotMatch(source, /botToken\s*[,}]/);
   assert.doesNotMatch(source, /webhookSecret\s*[,}]/);
 });
