@@ -610,7 +610,7 @@ export async function consumeTelegramIdentityLink(input: {
   telegramUserId: number;
   telegramUsername: string | null;
 }) {
-  const rows = await supabaseRest<TelegramConsumeResult[]>("rpc/telegram_consume_identity_link", {
+  const rows = await supabaseRest<TelegramConsumeResult[]>("rpc/telegram_consume_identity_link_v2", {
     method: "POST",
     body: {
       p_token_hash: input.tokenHash,

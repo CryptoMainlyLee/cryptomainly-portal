@@ -53,8 +53,8 @@ begin
   if to_regprocedure('public.admin_issue_telegram_link_token(uuid,bigint,text,text)') is null then
     raise exception 'Missing admin_issue_telegram_link_token RPC';
   end if;
-  if to_regprocedure('public.telegram_consume_identity_link(text,bigint,bigint,text)') is null then
-    raise exception 'Missing telegram_consume_identity_link RPC';
+  if to_regprocedure('public.telegram_consume_identity_link_v2(text,bigint,bigint,text)') is null then
+    raise exception 'Missing telegram_consume_identity_link_v2 RPC';
   end if;
 
   insert into public.members(display_name,email,source_system,marketing_status)
@@ -129,7 +129,7 @@ begin
   -- ACTIVE link succeeds, username is normalized, and same update is idempotent.
   select result_code,member_id,telegram_account_id,linked_at,replayed
   into v_result,v_member,v_account,v_linked,v_replayed
-  from public.telegram_consume_identity_link(repeat('b',64),100001,710000001,'@Phase3A_Active');
+  from public.telegram_consume_identity_link_v2(repeat('b',64),100001,710000001,'@Phase3A_Active');
   if v_result<>'LINKED' or v_member<>v_active or v_account is null or v_replayed then
     raise exception 'ACTIVE consume/link failed';
   end if;
@@ -147,19 +147,19 @@ begin
 
   select result_code,member_id,telegram_account_id,linked_at,replayed
   into v_result,v_member,v_account,v_linked,v_replayed
-  from public.telegram_consume_identity_link(repeat('b',64),100001,710000001,'@Phase3A_Active');
+  from public.telegram_consume_identity_link_v2(repeat('b',64),100001,710000001,'@Phase3A_Active');
   if v_result<>'ALREADY_LINKED_IDEMPOTENT' or not v_replayed then
     raise exception 'Same Telegram update was not idempotent';
   end if;
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('b',64),100002,710000001,'@Phase3A_Active');
+  from public.telegram_consume_identity_link_v2(repeat('b',64),100002,710000001,'@Phase3A_Active');
   if v_result<>'TOKEN_CONSUMED' then raise exception 'Different update reused consumed token'; end if;
 
   -- LIFETIME and pending-restoration ACTIVE members remain eligible for identity-only verification.
   select version into v_version from public.member_safeguarding_state where member_id=v_lifetime;
   perform public.admin_issue_telegram_link_token(v_lifetime,v_version,repeat('c',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('c',64),100003,710000003,null);
+  from public.telegram_consume_identity_link_v2(repeat('c',64),100003,710000003,null);
   if v_result<>'LINKED' then raise exception 'LIFETIME verification failed'; end if;
   if not exists(
     select 1 from public.telegram_accounts where member_id=v_lifetime and telegram_user_id=710000003
@@ -173,7 +173,7 @@ begin
   select version into v_version from public.member_safeguarding_state where member_id=v_restore;
   perform public.admin_issue_telegram_link_token(v_restore,v_version,repeat('d',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('d',64),100004,710000004,'phase3a_restore');
+  from public.telegram_consume_identity_link_v2(repeat('d',64),100004,710000004,'phase3a_restore');
   if v_result<>'LINKED' then raise exception 'Pending restoration incorrectly blocked identity verification'; end if;
 
   -- FORMER and Blocked members cannot issue links.
@@ -196,7 +196,7 @@ begin
     where member_id=v_blocked and token_hash=repeat('f',64) and revoked_at is not null
   ) then raise exception 'Block transition did not revoke pending token'; end if;
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('f',64),100005,710000005,'phase3a_blocked');
+  from public.telegram_consume_identity_link_v2(repeat('f',64),100005,710000005,'phase3a_blocked');
   if v_result<>'TOKEN_REVOKED' then raise exception 'Revoked token did not remain unusable'; end if;
   select version into v_version from public.member_safeguarding_state where member_id=v_blocked;
   begin
@@ -213,24 +213,21 @@ begin
   select version into v_version from public.member_safeguarding_state where member_id=v_raw;
   perform public.admin_issue_telegram_link_token(v_raw,v_version,repeat('1',64),'phase3a-sql-test');
   select result_code,telegram_account_id into v_result,v_token
-  from public.telegram_consume_identity_link(repeat('1',64),100006,710000006,'phase3a_raw');
+  from public.telegram_consume_identity_link_v2(repeat('1',64),100006,710000006,'phase3a_raw');
   if v_result<>'LINKED' or v_token<>v_account then raise exception 'Raw-only Telegram row was not upgraded in place'; end if;
   if (select telegram_raw from public.telegram_accounts where id=v_account)<>'legacy raw phase3a reference' then
     raise exception 'telegram_raw was not preserved';
   end if;
 
-  -- Multiple legacy rows fail closed as ambiguous.
-  insert into public.telegram_accounts(member_id,telegram_username) values
-    (v_ambiguous,'phase3a_ambig_one'),
-    (v_ambiguous,'phase3a_ambig_two');
-  select version into v_version from public.member_safeguarding_state where member_id=v_ambiguous;
-  perform public.admin_issue_telegram_link_token(v_ambiguous,v_version,repeat('2',64),'phase3a-sql-test');
-  select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('2',64),100007,710000007,'phase3a_ambiguous');
-  if v_result<>'TELEGRAM_ACCOUNT_AMBIGUOUS' then raise exception 'Ambiguous Telegram rows did not fail closed'; end if;
-  if exists(select 1 from public.telegram_accounts where member_id=v_ambiguous and telegram_user_id is not null) then
-    raise exception 'Ambiguous Telegram rows were mutated';
-  end if;
+  -- The canonical one-row-per-member index prevents ambiguous legacy Telegram rows.
+  insert into public.telegram_accounts(member_id,telegram_username)
+  values (v_ambiguous,'phase3a_ambig_one');
+  begin
+    insert into public.telegram_accounts(member_id,telegram_username)
+    values (v_ambiguous,'phase3a_ambig_two');
+    raise exception 'Expected one-Telegram-row-per-member uniqueness failure';
+  exception when unique_violation then null;
+  end;
 
   -- Existing numeric owner and existing different verified ID are hard conflicts.
   insert into public.telegram_accounts(member_id,telegram_user_id,telegram_username,linked_at,bot_started_at,dm_available,last_verified_at)
@@ -238,7 +235,7 @@ begin
   select version into v_version from public.member_safeguarding_state where member_id=v_target;
   perform public.admin_issue_telegram_link_token(v_target,v_version,repeat('3',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('3',64),100008,710000008,'phase3a_target');
+  from public.telegram_consume_identity_link_v2(repeat('3',64),100008,710000008,'phase3a_target');
   if v_result<>'TELEGRAM_ID_OWNED' then raise exception 'Cross-member numeric owner was not rejected'; end if;
 
   insert into public.telegram_accounts(member_id,telegram_user_id,telegram_username,linked_at,bot_started_at,dm_available,last_verified_at)
@@ -257,7 +254,7 @@ begin
   select version into v_version from public.member_safeguarding_state where member_id=v_protected_target;
   perform public.admin_issue_telegram_link_token(v_protected_target,v_version,repeat('5',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('5',64),100009,710000010,'phase3a_current_name');
+  from public.telegram_consume_identity_link_v2(repeat('5',64),100009,710000010,'phase3a_current_name');
   if v_result<>'TELEGRAM_USERNAME_CONFLICT' then raise exception 'Current username owner conflict was not rejected'; end if;
 
   -- Ever-blocked verification captures protected identity; repeating same member is idempotent.
@@ -269,7 +266,7 @@ begin
   select version into v_version from public.member_safeguarding_state where member_id=v_protected_owner;
   perform public.admin_issue_telegram_link_token(v_protected_owner,v_version,repeat('6',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('6',64),100010,710000011,'phase3a_protected');
+  from public.telegram_consume_identity_link_v2(repeat('6',64),100010,710000011,'phase3a_protected');
   if v_result<>'LINKED' then raise exception 'Ever-blocked verified linkage failed'; end if;
   if not exists(
     select 1 from public.member_protected_identifiers
@@ -291,18 +288,22 @@ begin
     raise exception 'Same-member protected identifier was not idempotent';
   end if;
 
+  -- Remove the current Telegram account so the next cases exercise protected history,
+  -- rather than the earlier current-owner conflict checks.
+  delete from public.telegram_accounts where member_id=v_protected_owner;
+
   -- Protected numeric and username identifiers cannot be linked to another canonical member.
   select version into v_version from public.member_safeguarding_state where member_id=v_protected_target;
   perform public.admin_issue_telegram_link_token(v_protected_target,v_version,repeat('7',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('7',64),100011,710000011,'phase3a_other');
+  from public.telegram_consume_identity_link_v2(repeat('7',64),100011,710000011,'phase3a_other');
   if v_result<>'PROTECTED_IDENTIFIER_CONFLICT' then
     raise exception 'Protected numeric identifier conflict was not rejected';
   end if;
 
   perform public.admin_issue_telegram_link_token(v_protected_target,v_version,repeat('8',64),'phase3a-sql-test');
   select result_code into v_result
-  from public.telegram_consume_identity_link(repeat('8',64),100012,710000013,'phase3a_protected');
+  from public.telegram_consume_identity_link_v2(repeat('8',64),100012,710000013,'phase3a_protected');
   if v_result<>'PROTECTED_IDENTIFIER_CONFLICT' then
     raise exception 'Protected username conflict was not rejected';
   end if;
