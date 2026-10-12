@@ -4,5 +4,19 @@
       "maxDuration": 10,
       "memory": 1024
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/supabase-keepalive",
+      "schedule": "10 2 * * *"
+    },
+    {
+      "path": "/api/cron/supabase-keepalive",
+      "schedule": "10 10 * * *"
+    },
+    {
+      "path": "/api/cron/supabase-keepalive",
+      "schedule": "10 18 * * *"
+    }
+  ]
 }
