@@ -18,6 +18,8 @@ test("temporary Telegram E2E operator is preview-only and secret-protected", () 
   assert.match(source, /VERCEL_AUTOMATION_BYPASS_SECRET/);
   assert.match(source, /x-vercel-protection-bypass/);
   assert.match(source, /drop_pending_updates/);
+  assert.match(source, /deleteWebhook/);
+  assert.match(source, /deleted:\s*true/);
   assert.match(source, /buildTelegramWebhookRegistration/);
   assert.match(source, /actualUpdates\[0\]\s*!==\s*["']message["']/);
   assert.doesNotMatch(source, /telegram_group_access/);

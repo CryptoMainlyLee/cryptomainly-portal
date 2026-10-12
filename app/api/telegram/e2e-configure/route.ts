@@ -23,7 +23,9 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const operatorSecret = process.env.E2E_TELEGRAM_OPERATOR_SECRET;
-  const requestKey = new URL(request.url).searchParams.get("key");
+  const requestUrl = new URL(request.url);
+  const requestKey = requestUrl.searchParams.get("key");
+  const action = requestUrl.searchParams.get("action");
   if (!operatorSecret || requestKey !== operatorSecret) {
     return noStore(401);
   }
@@ -32,6 +34,28 @@ export async function GET(request: Request): Promise<Response> {
   const secret = process.env.TELEGRAM_MEMBERSHIP_WEBHOOK_SECRET;
   const protectionBypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   if (!token || !secret || !protectionBypass) return noStore(500);
+
+  if (action === "delete") {
+    try {
+      const deleteResponse = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drop_pending_updates: true }),
+        cache: "no-store",
+      });
+      await telegramJson(deleteResponse);
+
+      const infoResponse = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const info = await telegramJson(infoResponse);
+      const actualUrl = typeof info.result?.url === "string" ? info.result.url : "";
+      return actualUrl === "" ? noStore(200, { deleted: true }) : noStore(502);
+    } catch {
+      return noStore(502);
+    }
+  }
 
   const webhookUrl = new URL("/api/telegram/webhook", request.url);
   webhookUrl.searchParams.set("x-vercel-protection-bypass", protectionBypass);
