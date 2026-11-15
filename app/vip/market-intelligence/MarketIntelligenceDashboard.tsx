@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import "./market-intelligence.css";
 import {
-  MARKET_OBSERVATIONS,
-  RESEARCH_EDITION_DATE,
   type MarketObservation,
   type MarketCategory,
 } from "./observations";
+import {
+  LATEST_RESEARCH_EDITION,
+  type ResearchEdition,
+} from "./editions";
 
 declare global {
   interface Window {
@@ -79,31 +81,47 @@ function XPostEmbed({ item, showAll, screenshot }: { item: MarketObservation; sh
     };
   }, [active]);
 
+  const previewContents = (
+    <>
+      <span className="mi-art-top">
+        <span>ACTUAL CHART AVAILABLE FROM SOURCE</span>
+        <span className="mi-art-tag">ORIGINAL X POST</span>
+      </span>
+      <ChartIcon category={item.category} />
+      {screenshot ? (
+        <span className="mi-share-static mi-preview-label">
+          View the real source charts on the CryptoMainly research page
+        </span>
+      ) : (
+        <span className="mi-preview-cta">
+          <span aria-hidden="true">◉</span>
+          <strong>VIEW ACTUAL CHART</strong>
+          <span aria-hidden="true">↗</span>
+        </span>
+      )}
+      <span className="mi-preview-note">
+        {screenshot
+          ? "The illustration is decorative, not actual price data."
+          : "Tap anywhere on this chart to reveal the analyst's original X post. Illustration is not real market data."}
+      </span>
+    </>
+  );
+
   return (
     <div className="mi-visual">
       {!active ? (
-        <div className="mi-art-preview">
-          <div className="mi-art-top">
-            <span>CHART FROM ORIGINAL SOURCE</span>
-            <span className="mi-art-tag">X EMBED AVAILABLE</span>
-          </div>
-          <ChartIcon category={item.category} />
-          <div className="mi-art-bottom">
-            <span>Decorative preview — not actual price data</span>
-            {screenshot ? (
-              <span className="mi-share-static">View the original chart on the dashboard ↗</span>
-            ) : (
-              <button
-                type="button"
-                className="mi-reveal"
-                onClick={() => setSelfEnabled(true)}
-                aria-label={"Load original X post with chart for " + item.title}
-              >
-                Load source chart ↗
-              </button>
-            )}
-          </div>
-        </div>
+        screenshot ? (
+          <div className="mi-art-preview mi-share-visual">{previewContents}</div>
+        ) : (
+          <button
+            type="button"
+            className="mi-art-preview mi-chart-trigger"
+            onClick={() => setSelfEnabled(true)}
+            aria-label={"Show the original X chart for " + item.title + " by " + item.source}
+          >
+            {previewContents}
+          </button>
+        )
       ) : (
         <div className="mi-x-embed">
           <div className="mi-x-frame" ref={rootRef}>
@@ -163,7 +181,13 @@ function ObservationCard({
   );
 }
 
-export default function MarketIntelligenceDashboard() {
+export default function MarketIntelligenceDashboard({
+  edition = LATEST_RESEARCH_EDITION,
+  isArchive = false,
+}: {
+  edition?: ResearchEdition;
+  isArchive?: boolean;
+}) {
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [showAllCharts, setShowAllCharts] = useState(false);
@@ -175,15 +199,15 @@ export default function MarketIntelligenceDashboard() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return MARKET_OBSERVATIONS.filter((item) => {
+    return edition.observations.filter((item) => {
       if (filter !== "all" && item.category !== filter) return false;
       if (!q) return true;
       return [
         item.title, item.symbol, item.source, item.categoryLabel, item.summary, item.type,
       ].join(" ").toLowerCase().includes(q);
     });
-  }, [filter, search]);
-  const shown = screenshot ? MARKET_OBSERVATIONS.slice(0, 4) : filtered;
+  }, [edition.observations, filter, search]);
+  const shown = screenshot ? edition.observations.slice(0, 4) : filtered;
 
   return (
     <div className={"mi-site" + (screenshot ? " mi-share-mode" : "")}>
@@ -211,15 +235,22 @@ export default function MarketIntelligenceDashboard() {
             Explore the original charts and choose the ideas worth investigating further.
           </p>
           <div className="mi-meta">
-            <span>Research edition: {RESEARCH_EDITION_DATE}</span>
+            <span>{isArchive ? "Archive edition: " : "Latest edition: "}{edition.displayDate}</span>
             <span className="mi-pill">Historic observations · Not live trade signals</span>
           </div>
+          {!screenshot && (
+            <div className="mi-edition-navigation">
+              <span className="mi-edition-status">{isArchive ? "Archived edition — preserved for reference" : "Latest published research"}</span>
+              {isArchive && <a href="/vip/market-intelligence">View latest research ↗</a>}
+              <a href="/vip/market-intelligence/archive">Browse research archive →</a>
+            </div>
+          )}
         </section>
 
         {!screenshot && (
           <>
             <div className="mi-stats" aria-label="Research summary">
-              <div><b>{MARKET_OBSERVATIONS.length}</b><span>Research observations</span></div>
+              <div><b>{edition.observations.length}</b><span>Research observations</span></div>
               <div><b>3</b><span>Market categories</span></div>
               <div><b>0</b><span>Verified trade signals</span></div>
             </div>
@@ -253,7 +284,7 @@ export default function MarketIntelligenceDashboard() {
           </>
         )}
 
-        {screenshot && <p className="mi-snapshot-label">Research highlights · 4 selected discussions</p>}
+        {screenshot && <p className="mi-snapshot-label">{isArchive ? "Archived edition" : "Research highlights"} · 4 selected discussions</p>}
         <div className="mi-grid" aria-label="Market observations">
           {shown.map((item) => (
             <ObservationCard item={item} key={item.id} showAll={showAllCharts} screenshot={screenshot} />
