@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 type GlobalStats = {
   coins: number | null;
@@ -78,6 +79,16 @@ export default function GlobalMarketBar({ refreshMs = 90_000 }: { refreshMs?: nu
             </span>
           )}
         </span>
+        <Link
+          href="/vip/market-intelligence"
+          aria-label="Open CryptoMainly Market Intelligence research"
+          title="Market Intelligence"
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-amber-400/10 px-3 py-1 text-[11px] font-bold text-amber-300 ring-1 ring-amber-400/30 transition hover:bg-amber-400/20 hover:text-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 md:max-lg:fixed md:max-lg:left-1/2 md:max-lg:top-8 md:max-lg:z-40 md:max-lg:h-8 md:max-lg:w-8 md:max-lg:justify-center md:max-lg:-translate-x-1/2 md:max-lg:px-0"
+        >
+          <span className="md:max-lg:sr-only">Market Intelligence</span>
+          <span aria-hidden="true" className="hidden md:max-lg:inline">MI</span>
+          <span aria-hidden="true" className="md:max-lg:hidden">↗</span>
+        </Link>
         <span>24 h Vol: <span className="text-white/90">{formatMoney(g?.vol24h ?? null)}</span></span>
         <span>
           Dominance: <span className="text-white/90">BTC {formatPct(g?.btcDom ?? null)} • ETH {formatPct(g?.ethDom ?? null)}</span>
