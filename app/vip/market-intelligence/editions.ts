@@ -31,6 +31,10 @@ const ORIGINAL_EDITIONS: ResearchEdition[] = [
   },
 ];
 
+// Restricted admin review can inspect original snapshots. Never import this
+// export into a client component or an unauthenticated route.
+export const EDITORIAL_SOURCE_EDITIONS: ReadonlyArray<ResearchEdition> = ORIGINAL_EDITIONS;
+
 // A whole-edition takedown removes its public route and archive entry.
 // Individual takedowns remove those cards from both latest and archive views.
 // An empty edition is also withheld rather than showing a misleading blank.
