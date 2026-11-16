@@ -7,10 +7,7 @@ import {
   type MarketObservation,
   type MarketCategory,
 } from "./observations";
-import {
-  LATEST_RESEARCH_EDITION,
-  type ResearchEdition,
-} from "./editions";
+import type { ResearchEdition } from "./editions";
 
 declare global {
   interface Window {
@@ -182,10 +179,10 @@ function ObservationCard({
 }
 
 export default function MarketIntelligenceDashboard({
-  edition = LATEST_RESEARCH_EDITION,
+  edition,
   isArchive = false,
 }: {
-  edition?: ResearchEdition;
+  edition: ResearchEdition;
   isArchive?: boolean;
 }) {
   const [filter, setFilter] = useState<Filter>("all");

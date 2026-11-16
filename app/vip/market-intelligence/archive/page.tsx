@@ -53,7 +53,7 @@ export default function ResearchArchiveIndex() {
               <p>{edition.observations.length} source-linked observations. Research recorded for this date only.</p>
               <span className="mi-archive-tags">
                 {edition.highlights.join(" · ")}
-                {edition.slug === LATEST_RESEARCH_EDITION.slug ? " · Current edition" : ""}
+                {edition.slug === LATEST_RESEARCH_EDITION?.slug ? " · Current edition" : ""}
               </span>
               <a href={"/vip/market-intelligence/archive/" + edition.slug}>Open this edition ↗</a>
             </article>

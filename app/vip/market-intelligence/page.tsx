@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import MarketIntelligenceDashboard from "./MarketIntelligenceDashboard";
+import { LATEST_RESEARCH_EDITION } from "./editions";
 
 export const metadata: Metadata = {
   title: "Market Intelligence | CryptoMainly",
@@ -10,5 +12,6 @@ export const metadata: Metadata = {
 };
 
 export default function MarketIntelligencePage() {
-  return <MarketIntelligenceDashboard />;
+  if (!LATEST_RESEARCH_EDITION) notFound();
+  return <MarketIntelligenceDashboard edition={LATEST_RESEARCH_EDITION} />;
 }
