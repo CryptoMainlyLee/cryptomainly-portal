@@ -37,6 +37,30 @@ Date: 16 November 2026 (UK). Feature branch ONLY. NO production rollout.
   still INACTIVE; previous successful private runs and duplicate checks
   are present in Make history. No additional credits were spent.
 
+## Extra full-withdrawal release test
+
+- A separate disposable Git worktree at commit `be7b643` was built with
+  the **entire** 15 November edition hidden. The dated PNG was quarantined
+  from that fixture's `public/` directory, not from the live website.
+- Production-style Next.js build completed successfully.
+- HTTP checks on the isolated fixture returned:
+  Latest `/vip/market-intelligence` **404**;
+  Archive index **200** (with no leaked original observation ID);
+  dated edition route **404**; original dated PNG **404**.
+- Unauthorised protected admin remained **307 to login**.
+  Authorised admin returned **200** and showed the original items
+  explicitly labelled as withheld, with no mutation forms.
+- New `npm run prebuild` protection in `package.json` automatically
+  runs `scripts/verify-mi-withdrawals.cjs`. It rejects invalid moderation
+  records, unknown edition slugs and any still-public dated PNG belonging
+  to a hidden post or whole edition. Tested forced failure with a stale
+  dated screenshot, then successful recovery after quarantine.
+- The disposable QA worktree was removed. The working feature branch
+  remains configured with **zero** currently hidden posts, and the full
+  original edition still visible in its own preview.
+- This verifies build-time **withdrawal**, not irreversible deletion from
+  old Git history/CDN caches.
+
 ## Explicitly NOT proven by this rehearsal
 - An actual fresh private Telegram message for V1.12 was NOT sent.
 - It does not prove the production Make scenario has the same atomic
