@@ -1,0 +1,158 @@
+{
+  "schema": "cryptomainly-source-registry-v1",
+  "revision_sha256": "1dca1387599ee69162c56aa1576c5261b5543a5db855bd2e53d9a5a9048dd12d",
+  "updated_at_utc": "2026-11-16T23:04:44+00:00",
+  "source_count": 14,
+  "description": "Curated public X accounts for research discovery only; not an endorsement, publication approval, trade signal or a permission to scrape.",
+  "accounts": [
+    {
+      "handle": "PeterLBrandt",
+      "market": "both",
+      "focus": "classical technical analysis chart patterns"
+    },
+    {
+      "handle": "RektCapital",
+      "market": "crypto",
+      "focus": "Bitcoin support resistance and trend charts"
+    },
+    {
+      "handle": "CryptoCred",
+      "market": "crypto",
+      "focus": "price-level and structure charts"
+    },
+    {
+      "handle": "MarkMinervini",
+      "market": "stocks",
+      "focus": "stock breakout and relative strength charts"
+    },
+    {
+      "handle": "allstarcharts",
+      "market": "stocks",
+      "focus": "equity technical charts and breadth"
+    },
+    {
+      "handle": "RaoulGMI",
+      "market": "both",
+      "focus": "macro charts (chart setups only; commentary rejected)"
+    },
+    {
+      "handle": "Barchart",
+      "market": "both",
+      "focus": "technical charts; reject infographics and news"
+    },
+    {
+      "handle": "unusual_whales",
+      "market": "stocks",
+      "focus": "technical charts only; exclude news and flow summaries"
+    },
+    {
+      "handle": "thebull_crypto",
+      "market": "crypto",
+      "focus": "crypto chart setups"
+    },
+    {
+      "handle": "TheCryptoExpres",
+      "market": "crypto",
+      "focus": "crypto chart setups (handle supplied by user; verify live source)"
+    },
+    {
+      "handle": "CryptoCon_",
+      "market": "crypto",
+      "focus": "Bitcoin technical trend and cycle charts"
+    },
+    {
+      "handle": "coinbureau",
+      "market": "crypto",
+      "focus": "technical chart setups only; reject general news"
+    },
+    {
+      "handle": "MMCrypto",
+      "market": "crypto",
+      "focus": "crypto chart setups only; exclude sponsored promotions"
+    },
+    {
+      "handle": "carlmoon",
+      "market": "crypto",
+      "focus": "crypto technical chart setups only; exclude sponsorships"
+    }
+  ],
+  "daily_primary_accounts": {
+    "monday": {
+      "uk_time": "10:00",
+      "primary_accounts": [
+        "PeterLBrandt",
+        "RektCapital",
+        "CryptoCon_",
+        "thebull_crypto",
+        "coinbureau",
+        "MarkMinervini"
+      ]
+    },
+    "tuesday": {
+      "uk_time": "15:30",
+      "primary_accounts": [
+        "CryptoCred",
+        "MMCrypto",
+        "TheCryptoExpres",
+        "carlmoon",
+        "allstarcharts",
+        "Barchart"
+      ]
+    },
+    "wednesday": {
+      "uk_time": "15:30",
+      "primary_accounts": [
+        "CryptoCred",
+        "MMCrypto",
+        "TheCryptoExpres",
+        "carlmoon",
+        "allstarcharts",
+        "Barchart"
+      ]
+    },
+    "thursday": {
+      "uk_time": "15:30",
+      "primary_accounts": [
+        "RektCapital",
+        "thebull_crypto",
+        "CryptoCon_",
+        "MarkMinervini",
+        "unusual_whales",
+        "RaoulGMI"
+      ]
+    },
+    "friday": {
+      "uk_time": "15:30",
+      "primary_accounts": [
+        "CryptoCred",
+        "MarkMinervini",
+        "Barchart",
+        "allstarcharts",
+        "RektCapital",
+        "thebull_crypto"
+      ]
+    },
+    "saturday": {
+      "uk_time": "15:30",
+      "primary_accounts": [
+        "CryptoCon_",
+        "thebull_crypto",
+        "TheCryptoExpres",
+        "coinbureau",
+        "MMCrypto",
+        "carlmoon"
+      ]
+    },
+    "sunday": {
+      "uk_time": "15:30",
+      "primary_accounts": [
+        "RektCapital",
+        "PeterLBrandt",
+        "CryptoCon_",
+        "RaoulGMI",
+        "thebull_crypto",
+        "coinbureau"
+      ]
+    }
+  }
+}
