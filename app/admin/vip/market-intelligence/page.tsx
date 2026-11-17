@@ -116,6 +116,7 @@ export default async function ResearchModerationReview() {
             );
           })}
         </section>
+        <Link href="/admin/market-intelligence" className="mt-8 inline-block rounded-lg border border-amber-400/60 px-4 py-2 text-sm text-amber-200">Open independent editorial administration →</Link>
         <p className="mt-8 text-sm text-slate-400">
           This review reflects the currently deployed code snapshot only.
           Old Git history, cached pages and previously published PNGs may remain reachable

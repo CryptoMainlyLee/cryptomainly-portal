@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import MarketIntelligenceDashboard from "./MarketIntelligenceDashboard";
-import { LATEST_RESEARCH_EDITION } from "./editions";
+import { publicEditions } from "../../_mi/public-editions";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "Market Intelligence | CryptoMainly",
@@ -11,7 +13,8 @@ export const metadata: Metadata = {
   alternates: { canonical: "/vip/market-intelligence" },
 };
 
-export default function MarketIntelligencePage() {
-  if (!LATEST_RESEARCH_EDITION) notFound();
-  return <MarketIntelligenceDashboard edition={LATEST_RESEARCH_EDITION} />;
+export default async function MarketIntelligencePage() {
+  const edition = (await publicEditions())[0];
+  if (!edition) notFound();
+  return <MarketIntelligenceDashboard edition={edition} />;
 }

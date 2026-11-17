@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import "../market-intelligence.css";
-import { LATEST_RESEARCH_EDITION, RESEARCH_EDITIONS } from "../editions";
+import { publicEditions } from "../../../_mi/public-editions";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
   title: "Research Archive | CryptoMainly",
@@ -9,7 +11,9 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function ResearchArchiveIndex() {
+export default async function ResearchArchiveIndex() {
+  const RESEARCH_EDITIONS = await publicEditions();
+  const LATEST_RESEARCH_EDITION = RESEARCH_EDITIONS[0];
   return (
     <div className="mi-site">
       <div className="mi-glow" aria-hidden />

@@ -33,6 +33,9 @@ try {
     if(new Set(ids).size!==ids.length)throw Error("Duplicate hidden post");
     if(ids.length)affected.add(s);
  }
+ // V1.19: no dated screenshot may bypass the runtime visibility-aware route.
+ const publicDir=path.join(root,"public/assets/market-intelligence");
+ if(fs.existsSync(publicDir)&&fs.readdirSync(publicDir).some(n=>n.toLowerCase().endsWith(".png")))throw Error("Market Intelligence PNG must be served by the guarded route, not public/assets");
  for(const s of affected){
    const media=path.join(root,"public/assets/market-intelligence",s+"-telegram.png");
    if(fs.existsSync(media))throw Error("Withdrawn research still has a public dated screenshot: "+s);
