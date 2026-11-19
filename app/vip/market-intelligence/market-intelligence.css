@@ -167,3 +167,13 @@
   .mi-chart-trigger .mi-chart-art{height:100px}
 }
 @media(prefers-reduced-motion:reduce){.mi-chart-trigger{transition:none}}
+
+/* Archive search — only public, moderated records are passed to the page. */
+.mi-archive-search { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; margin:20px 0; padding:18px; border:1px solid rgba(255,255,255,.14); border-radius:12px; }
+.mi-archive-search label { display:flex; flex-direction:column; gap:6px; color:inherit; font-size:14px; min-width:130px; }
+.mi-archive-search label:first-child { flex:1 1 260px; }
+.mi-archive-search input, .mi-archive-search select, .mi-archive-search button { color:#f7fafc; background:#151a24; border:1px solid #596477; border-radius:8px; padding:10px 12px; min-height:44px; max-width:100%; }
+.mi-archive-search button { cursor:pointer; border-color:#fbbf24; font-weight:600; }
+.mi-archive-search a { color:#fbbf24; padding:10px 0; }
+.mi-archive-matches { padding-left:18px; margin:8px 0; line-height:1.6; }
+@media (max-width:600px) { .mi-archive-search label { width:100%; } .mi-archive-search button { flex:1; } }

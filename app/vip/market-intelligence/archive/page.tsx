@@ -11,9 +11,27 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function ResearchArchiveIndex() {
-  const RESEARCH_EDITIONS = await publicEditions();
-  const LATEST_RESEARCH_EDITION = RESEARCH_EDITIONS[0];
+type SearchParams = { q?: string | string[]; market?: string | string[]; date?: string | string[] };
+function param(v: string | string[] | undefined) {
+  return typeof v === "string" ? v.trim().slice(0,160) : "";
+}
+export default async function ResearchArchiveIndex({ searchParams }: {searchParams?: SearchParams}) {
+  const allEditions = await publicEditions();
+  const LATEST_RESEARCH_EDITION = allEditions[0];
+  const q = param(searchParams?.q);
+  const market = param(searchParams?.market);
+  const date = param(searchParams?.date);
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = allEditions.filter(e => !date || e.slug === date).map(edition => {
+    const observations = edition.observations.filter(item => {
+      if (market && market !== item.category) return false;
+      const haystack = [edition.slug,edition.displayDate,item.symbol,item.asset,item.authorHandle,item.source,item.category,item.title,item.summary,item.type,item.timeframe,item.pattern_or_anomaly].filter(Boolean).join(" ").toLowerCase();
+      return terms.every(term => haystack.includes(term));
+    });
+    return { ...edition, matches: observations };
+  }).filter(e => e.matches.length > 0);
+  const searching = Boolean(q || market || date);
+  const totalMatches = filtered.reduce((sum,e) => sum+e.matches.length,0);
   return (
     <div className="mi-site">
       <div className="mi-glow" aria-hidden />
@@ -41,20 +59,41 @@ export default async function ResearchArchiveIndex() {
             <a href="/vip/market-intelligence">View latest research →</a>
           </div>
         </section>
+        <form method="get" action="/vip/market-intelligence/archive" className="mi-archive-search">
+          <label>Search all published research
+            <input name="q" type="search" defaultValue={q} maxLength={160} placeholder="Asset, ticker, analyst, pattern or keyword" />
+          </label>
+          <label>Market
+            <select name="market" defaultValue={market}>
+              <option value="">All markets</option><option value="crypto">Crypto</option>
+              <option value="stocks">Stocks</option><option value="macro">Historical macro</option>
+            </select>
+          </label>
+          <label>Edition date
+            <select name="date" defaultValue={date}>
+              <option value="">All dates</option>
+              {allEditions.map(e => <option key={e.slug} value={e.slug}>{e.displayDate}</option>)}
+            </select>
+          </label>
+          <button type="submit">Search</button>
+          {searching && <a href="/vip/market-intelligence/archive">Clear filters</a>}
+        </form>
         <div className="mi-section-heading">
-          <h2>Published editions</h2>
-          <span>{RESEARCH_EDITIONS.length} {RESEARCH_EDITIONS.length === 1 ? "edition" : "editions"}</span>
+          <h2>{searching ? "Matching editions" : "Published editions"}</h2>
+          <span>{filtered.length} {filtered.length === 1 ? "edition" : "editions"} · {totalMatches} observations</span>
         </div>
         <p className="mi-archive-count">
           New dated editions will appear here after editorial review and publication.
           Archive links stay unchanged when the latest research is updated.
         </p>
         <div className="mi-archive-entries">
-          {RESEARCH_EDITIONS.map((edition) => (
+          {filtered.length === 0 && <p role="status">No public research matches your search.</p>}
+          {filtered.map((edition) => (
             <article key={edition.slug} className="mi-archive-entry">
               <span className="mi-archive-date">{edition.displayDate}</span>
               <h2>{edition.summary}</h2>
               <p>{edition.observations.length} source-linked observations. Research recorded for this date only.</p>
+              {searching && <ul className="mi-archive-matches">{edition.matches.map(item => <li key={item.id}>{item.symbol} · {item.title} · {item.source}</li>)}</ul>}
               <span className="mi-archive-tags">
                 {edition.highlights.join(" · ")}
                 {edition.slug === LATEST_RESEARCH_EDITION?.slug ? " · Current edition" : ""}

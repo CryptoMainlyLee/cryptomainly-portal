@@ -14,6 +14,15 @@ export type MarketObservation = {
   whyInteresting: string;
   limitations: string;
   url: string;
+  // Optional only for immutable legacy editions; mandatory on newly staged content.
+  created_at_utc?: string;
+  asset?: string;
+  timeframe?: string;
+  pattern_or_anomaly?: string;
+  confirmation?: string;
+  invalidation?: string;
+  thesis_key?: string;
+  editorial_score?: number;
 };
 
 // Editorial excerpts from the 15 November 2026 research pilot.
