@@ -14,5 +14,23 @@ export async function session(){const token=cookies().get(name)?.value??"";retur
 export function csrf(token:string){return mac("csrf:"+token)}
 export function csrfOK(token:string,input:string){return input.length===64&&equal(input,csrf(token))}
 export function setSession(value:string,maxAge=3600){cookies().set(name,value,{httpOnly:true,secure:process.env.VERCEL==="1"||process.env.MI_EDITORIAL_MODE!=="local",sameSite:"strict",path:editorPath,maxAge})}
-export function trustedOrigin(req:Request){if(process.env.VERCEL_ENV==="production")return "https://www.cryptomainly.co.uk";if(process.env.VERCEL_ENV==="preview"){const h=process.env.VERCEL_URL??"";if(!h.endsWith(".vercel.app")||!/^[a-z0-9-]+$/.test(h.slice(0,-11)))throw Error("Unknown preview origin");return "https://"+h}if(process.env.MI_EDITORIAL_MODE==="local")return "http://127.0.0.1:3197";return new URL(req.url).origin}
+function deploymentOrigin(){
+ const h=process.env.VERCEL_URL??"";
+ if(!h.endsWith(".vercel.app")||!/^[a-z0-9-]+$/.test(h.slice(0,-11)))throw Error("Unknown Vercel deployment origin");
+ return "https://"+h;
+}
+export function trustedOrigin(req:Request){
+ if(process.env.VERCEL_ENV==="production"){
+  const requestOrigin=new URL(req.url).origin;
+  // Keep the normal public administrator on its canonical custom domain.
+  if(requestOrigin==="https://www.cryptomainly.co.uk")return requestOrigin;
+  // Allow ONLY this build's verified deployment hostname for staged-prod QA.
+  // Never accept an arbitrary *.vercel.app hostname or spoofed Origin header.
+  if(requestOrigin===deploymentOrigin())return requestOrigin;
+  throw Error("Untrusted production origin");
+ }
+ if(process.env.VERCEL_ENV==="preview")return deploymentOrigin();
+ if(process.env.MI_EDITORIAL_MODE==="local")return "http://127.0.0.1:3197";
+ return new URL(req.url).origin;
+}
 export async function form(req:Request){if(req.headers.get("origin")!==trustedOrigin(req)||req.headers.get("sec-fetch-site")==="cross-site")throw Error("Cross-origin request rejected");if(!req.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded"))throw Error("Unsupported form");const length=Number(req.headers.get("content-length"));if(!Number.isFinite(length)||length<0||length>8192)throw Error("Oversized form");const reader=req.body?.getReader();if(!reader)throw Error("Missing body");let bytes=0;const chunks:Uint8Array[]=[];try{for(;;){const x=await reader.read();if(x.done)break;bytes+=x.value.length;if(bytes>8192)throw Error("Oversized form");chunks.push(x.value)}}finally{await reader.cancel().catch(()=>{})}return new URLSearchParams(Buffer.concat(chunks).toString("utf8"))}
