@@ -57,7 +57,7 @@ function Preview({snapshot}:{snapshot:QueueSnapshot}){
   })}
  </section>
 }
-export default async function Page({searchParams}:{searchParams?:{error?:string;saved?:string}}){
+export default async function Page({searchParams}:{searchParams?:{error?:string;saved?:string;imported?:string;existing?:string}}){
  const token=await session();
  if(!token)return <main className="min-h-screen bg-[#07111f] p-8 text-slate-100"><h1 className="mb-3 text-2xl">Editorial review queue</h1><p>Sign in to Market Intelligence administration before reviewing private research.</p><Link href="/admin/market-intelligence" className="text-sky-300 underline">Administrator login</Link></main>;
  let snap:QueueSnapshot;try{snap=await readQueue()}catch{return <main className="min-h-screen bg-[#07111f] p-8 text-slate-100"><h1 className="text-xl">Private editorial queue unavailable</h1><p>Changes are blocked until its separate storage can be verified.</p><Link href="/admin/market-intelligence" className="text-sky-300 underline">Return to administration</Link></main>}
@@ -68,8 +68,18 @@ export default async function Page({searchParams}:{searchParams?:{error?:string;
   <header><p className="text-xs uppercase tracking-widest text-amber-300">CryptoMainly · Private editorial workflow · Development</p><h1 className="mt-2 text-3xl font-semibold">Research review queue</h1><p className="mt-2 text-sm text-slate-300">Prepare chart and data-insight research for editorial approval. This feature does not publish to the public site or Telegram.</p><Link href="/admin/market-intelligence" className="mt-3 inline-block text-sm text-sky-300 underline">Back to editorial administration</Link></header>
   <section className={panel}><p>{snap.state.items.length} research candidates · {count} review-approved · {unpublished} VIP highlight nominations</p><p className="mt-2 text-xs text-slate-400">Source roster: {snap.source.accounts.length} approved X accounts. Queue version: {snap.version==="missing"?"Not yet created":snap.version}. {disabled?"Read-only environment":""}</p>
    {searchParams?.saved==="1"&&<p role="status" className="mt-2 text-emerald-300">Private editorial change saved; no content published.</p>}
-   {searchParams?.error&&<p role="alert" className="mt-2 text-rose-300">{searchParams.error==="stale"?"The queue changed. Please inspect the latest version and try again.":searchParams.error==="confirm"?"Confirm the editorial action before submitting.":"The requested change was not confirmed; check evidence and source approval before retrying."}</p>}
+   {searchParams?.error&&<p role="alert" className="mt-2 text-rose-300">{searchParams.error==="stale"?"The queue changed. Please inspect the latest version and try again.":searchParams.error==="confirm"?"Confirm the editorial action before submitting.":"Scan import or editorial change was not confirmed. Check original source URLs, UTC dates, schema and the current registry revision."}</p>}
   </section>
+  <details className={panel}><summary className="cursor-pointer text-lg font-semibold text-amber-200">Import scanner research (up to 12 candidates)</summary>
+   <p className="mt-3 text-sm text-slate-300">Paste a complete JSON research batch supplied by the CryptoMainly Chart Scanner. This is an owner-authenticated import, not an unattended feed. All imported items remain <strong>unapproved candidates</strong>: they cannot publish an edition or send Telegram messages.</p>
+   <p className="mt-2 text-xs text-slate-400">The exact current 14-account registry revision must match the batch, and original canonical links, dates, content quality, age, duplicates and history are checked before anything is saved. Running the same batch twice will skip already queued links without overwriting your edits.</p>
+   <form method="post" action="/admin/market-intelligence/queue/import" className="mt-3 space-y-3">
+    <input type="hidden" name="csrf" value={csrf(token)}/><input type="hidden" name="version" value={snap.version}/>
+    <label className="block text-sm">Complete scanner JSON<textarea className={input+" mt-2 font-mono text-xs"} name="scan_payload" rows={9} maxLength={24000} required placeholder={'{"schema":"cryptomainly-scanner-review-intake-v1","scan_id":"...","generated_at_utc":"...","source_registry_revision":"...","items":[...]}'}/></label>
+    <button disabled={disabled} className={action}>Import for private editorial review (NO publishing)</button>
+   </form>
+  </details>
+  {searchParams?.imported!==undefined&&<p role="status" className="rounded-xl border border-emerald-700 bg-slate-900 px-5 py-3 text-sm text-emerald-200">Scanner import processed. Confirm the current research cards and source links below; no approvals or publication.</p>}
   <Preview snapshot={snap}/>
   <details className={panel}><summary className="cursor-pointer font-semibold text-amber-200">Add a private research candidate</summary>
    <form method="post" action="/admin/market-intelligence/queue/action" className="mt-4 space-y-4"><Meta token={token} version={snap.version} op="add"/><fieldset disabled={disabled} className="space-y-4"><Fields/><Reason/><Confirm text="Save as private candidate" disabled={disabled}/></fieldset></form>
