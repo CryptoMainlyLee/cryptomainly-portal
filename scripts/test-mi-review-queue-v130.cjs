@@ -59,6 +59,9 @@ const flags=["original_source","timestamp","visual_or_data","methodology","right
  fails(()=>targetExports.updateQueue(blank,{...input,action:"add",source_handle:"OtherAccount"},source,[],now),"X author mismatch rejected");
  const nominee=targetExports.updateQueue(blank,{...input,action:"add",kind:"data",url:"https://research.glassnode.com/the-week-onchain-week-46-2026/",source_handle:"glassnode",evidence:flags},source,[],now);
  fails(()=>targetExports.updateQueue(nominee,{...input,action:"approve",id:nominee.items[0].id},source,[],now),"Unapproved third-party provider cannot advance to release-ready");
+ const dayOnly=targetExports.updateQueue(blank,{...input,action:"add",kind:"data",published_at_utc:"2026-11-17",url:"https://research.glassnode.com/the-week-onchain-week-46-2026/",source_handle:"glassnode",evidence:flags},source,[],now);
+ ok(dayOnly.items[0].published_at_utc==="2026-11-17","Exact UTC time can remain unknown at candidate stage");
+ fails(()=>targetExports.updateQueue(dayOnly,{...input,action:"approve",id:dayOnly.items[0].id}, {accounts:[...source.accounts,{handle:"glassnode"}]},[],now),"Source approved but exact publication UTC missing still blocks approval");
  const wrong=structuredClone(approved);wrong.items[0].summary="Manipulated";
  fails(()=>targetExports.validateQueue(wrong),"Queue revision tampering blocked");
  const a=await targetExports.readQueue();ok(a.version==="missing"&&a.writable,"Local isolated queue starts unseeded");

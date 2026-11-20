@@ -45,7 +45,7 @@ export function validateQueue(value:any):QueueState{
   if(source.url!==i.url||!handles.test(i.source_handle)||source.handle&&source.handle.toLowerCase()!==i.source_handle.toLowerCase())throw Error("Source identity mismatch");
   if(urls.has(source.url.toLowerCase()))throw Error("Duplicate original post or article");urls.add(source.url.toLowerCase());
   for(const [k,min,max] of [["title",12,130],["summary",30,950],["why_it_matters",20,650],["limitations",20,650]] as const){if(!textOK(i[k],min,max))throw Error("Invalid "+k)}
-  if(!dateOK(i.published_at_utc)||!dateOK(i.created_at_utc)||!dateOK(i.updated_at_utc)||!day.test(i.edition_date)||new Date(i.edition_date+"T00:00:00Z").toISOString().slice(0,10)!==i.edition_date)throw Error("Invalid dates");
+  if(!(dateOK(i.published_at_utc)||(i.status==="candidate"&&day.test(i.published_at_utc)&&new Date(i.published_at_utc+"T00:00:00Z").toISOString().slice(0,10)===i.published_at_utc))||!dateOK(i.created_at_utc)||!dateOK(i.updated_at_utc)||!day.test(i.edition_date)||new Date(i.edition_date+"T00:00:00Z").toISOString().slice(0,10)!==i.edition_date)throw Error("Invalid dates");
   if(!Number.isInteger(i.score)||i.score<0||i.score>100||typeof i.vip_highlight!=="boolean")throw Error("Invalid score or highlight flag");
   if(!i.evidence||Object.keys(i.evidence).length!==fields.length||!fields.every(f=>typeof i.evidence[f]==="boolean"))throw Error("Invalid editorial evidence");
   if(i.status!=="approved_for_review"&&i.vip_highlight)throw Error("Highlight must be review-approved");
@@ -116,7 +116,7 @@ export function updateQueue(current:QueueState,input:QueueInput,sources:SourceSt
   if(!handles.test(input.source_handle)||url.handle&&url.handle.toLowerCase()!==input.source_handle.toLowerCase())throw Error("Source handle inconsistent with original X URL");
   const score=Number(input.score);
   if(!Number.isInteger(score)||score<0||score>100)throw Error("Invalid editorial score");
-  if(!dateOK(input.published_at_utc)||Date.parse(input.published_at_utc)>now.getTime()+300000||!day.test(input.edition_date)||new Date(input.edition_date+"T00:00:00Z").toISOString().slice(0,10)!==input.edition_date)throw Error("Invalid observation date");
+  if(!(dateOK(input.published_at_utc)||(day.test(input.published_at_utc)&&new Date(input.published_at_utc+"T00:00:00Z").toISOString().slice(0,10)===input.published_at_utc))||Date.parse(input.published_at_utc)>now.getTime()+300000||!day.test(input.edition_date)||new Date(input.edition_date+"T00:00:00Z").toISOString().slice(0,10)!==input.edition_date)throw Error("Invalid observation date");
   if(!["technical","data"].includes(input.kind)||!["crypto","stocks","macro"].includes(input.market))throw Error("Invalid research category");
   const evidence=Object.fromEntries(fields.map(k=>[k,input.evidence.includes(k)])) as Evidence;
   if(new Set(input.evidence).size!==input.evidence.length||!input.evidence.every(k=>fields.includes(k as keyof Evidence)))throw Error("Invalid evidence names");
@@ -129,7 +129,7 @@ export function updateQueue(current:QueueState,input:QueueInput,sources:SourceSt
   const item=n.items[position];id=item.id;
   if(action==="approve"){
    if(item.status!=="candidate")throw Error("Only candidates can be approved");
-   if(item.score<80||!fields.every(f=>item.evidence[f]))throw Error("Evidence and quality gates incomplete");
+   if(item.score<80||!fields.every(f=>item.evidence[f])||!dateOK(item.published_at_utc))throw Error("Evidence, exact UTC timestamp and quality gates incomplete");
    if(Date.parse(item.published_at_utc)>now.getTime()+300000||now.getTime()-Date.parse(item.published_at_utc)>336*3600*1000)throw Error("Source too old for daily research");
    const original=sourceIdentity(item.url);
    if(!original.handle||!sources.accounts.some(s=>s.handle.toLowerCase()===original.handle!.toLowerCase()))throw Error("Source not approved on live roster");
