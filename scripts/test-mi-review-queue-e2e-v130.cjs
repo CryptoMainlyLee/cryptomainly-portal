@@ -28,7 +28,7 @@ const input={
  const anonymous=await get(p);const publicHtml=await anonymous.text();ok(!publicHtml.includes("Household pressure reaches")&&!publicHtml.includes("Barchart ·"),"Anonymous private queue shows no drafts");
  eq((await post(p+"/action",{action:"add"})).status,401,"Anonymous writes denied");
  const login=await post("/admin/market-intelligence/session",{key:password});eq(login.status,303,"Shared admin login accepted");cookie=(login.headers.get("set-cookie")||"").split(";")[0];ok(cookie.startsWith("cm_mi_editor="),"Isolated editor cookie established");
- const blank=await page();ok(blank.html.includes("No candidates yet")&&blank.version==="missing","Empty private queue loads safely");
+ const blank=await page();ok(blank.html.includes("No research candidates yet")&&blank.version==="missing","Empty private queue loads safely");
  eq((await post(p+"/action",{action:"add",csrf:"0".repeat(64),version:"missing",...input,confirm:"yes",reason:"Reviewed secure source"},{Cookie:cookie})).status,403,"Tampered CSRF denied");
  eq((await post(p+"/action",{action:"add",csrf:blank.csrf,version:"missing",...input,confirm:"yes",reason:"Reviewed secure source"},{Cookie:cookie,Origin:"https://wrong.example"})).status,403,"Cross-origin write denied");
  saved(await change("add",input),"First-party candidate added to isolated queue");
@@ -36,8 +36,8 @@ const input={
  const id=after.items[0].id;
  ok((await (await get(p,{Cookie:cookie})).text()).includes("Household pressure reaches"),"Private queue renders new research");
  const incompleteHtml=await (await get(p,{Cookie:cookie})).text();
- ok(incompleteHtml.includes("Not ready for review approval")&&incompleteHtml.includes("Original first-party source has not been confirmed"),"Incomplete candidate shows exact evidence blockers");
- ok(incompleteHtml.includes("Complete evidence checks before approval"),"Incomplete candidate cannot use approval button");
+ ok(!incompleteHtml.includes("Not ready for review approval")&&incompleteHtml.includes("Edit post and prepare VIP message"),"New VIP editor shows research without a six-check evidence barrier");
+ ok(incompleteHtml.includes("Send to VIP"),"One-click VIP send wording is present on research card");
  const unauthPreview=await get(p+"/preview/2026-11-20");ok(!(await unauthPreview.text()).includes("Household pressure reaches"),"Anonymous edition preview hides draft data");
  const stale=await post(p+"/action",{action:"reject",id,version:"missing",csrf:blank.csrf,reason:"Review and reject",confirm:"yes"},{Cookie:cookie});ok(stale.headers.get("location").endsWith("?error=stale"),"Stale queue version rejected");
  const dup=await change("add",input);ok(dup.headers.get("location").endsWith("?error=save"),"Same original post cannot be added twice");
@@ -46,7 +46,7 @@ const input={
  const complete={...input,id,evidence:["original_source","timestamp","visual_or_data","methodology","rights","uk_review"]};
  saved(await change("edit",complete),"Editorial evidence checklist saved");
  const completeHtml=await (await get(p,{Cookie:cookie})).text();
- ok(completeHtml.includes("Mark review-approved (NOT publish)"),"Approval control enabled when all evidence is recorded");
+ ok(completeHtml.includes("Send to VIP"),"No extra approval UI appears after saving research evidence");
  saved(await change("approve",{id}),"Fully reviewed candidate marked review-approved");
  let approved=JSON.parse(fs.readFileSync(queueFile,"utf8"));eq(approved.items[0].status,"approved_for_review","Review-approved state persisted");
  ok((await (await get(p+"/preview/2026-11-20",{Cookie:cookie})).text()).includes("Household pressure reaches"),"Protected preview shows approved item");

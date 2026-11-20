@@ -1,106 +1,105 @@
 import type {Metadata} from "next";
 import Link from "next/link";
 import {session,csrf} from "../../../_mi/auth";
-import {approvalBlockers,readQueue,editionDraft,type QueueItem,type QueueSnapshot,type Evidence} from "../../../_mi/review-queue";
+import {readQueue,type QueueItem,type QueueSnapshot} from "../../../_mi/review-queue";
+import {composeVipText,vipConfig} from "../../../_mi/vip-outbox";
 
 export const dynamic="force-dynamic";
 export const revalidate=0;
-export const metadata:Metadata={title:"Research Review Queue | CryptoMainly",robots:{index:false,follow:false,nocache:true}};
-const panel="rounded-xl border border-slate-700 bg-slate-900/80 p-5";
-const input="w-full rounded-lg border border-slate-600 bg-slate-950 p-2.5 text-white";
-const action="rounded-lg border border-amber-400/60 px-4 py-2 text-sm font-semibold text-amber-100 disabled:opacity-40";
-const evidenceFields:[keyof Evidence,string][]= [
- ["original_source","Original first-party source viewed"],
- ["timestamp","UTC timestamp verified"],
- ["visual_or_data","Original visual or quantitative evidence inspected"],
- ["methodology","Metrics, timeframe and limitations checked"],
- ["rights","Rights/embedding and attribution reviewed"],
- ["uk_review","UK financial promotion/compliance review"]
-];
-function Meta({token,version,op,id=""}:{token:string;version:string;op:string;id?:string}){return <><input type="hidden" name="csrf" value={csrf(token)}/><input type="hidden" name="version" value={version}/><input type="hidden" name="action" value={op}/><input type="hidden" name="id" value={id}/></>}
-function Fields({item}:{item?:QueueItem}){
- return <div className="space-y-3">
-  <div className="grid gap-3 sm:grid-cols-3">
-   <label className="text-sm">Type<select className={input} name="kind" defaultValue={item?.kind??"data"}><option value="technical">Technical price chart</option><option value="data">Quantitative / on-chain insight</option></select></label>
-   <label className="text-sm">Market<select className={input} name="market" defaultValue={item?.market??"crypto"}><option value="crypto">Crypto</option><option value="stocks">Stocks</option><option value="macro">Macro</option></select></label>
-   <label className="text-sm">Quality score (0–100)<input className={input} type="number" name="score" min={0} max={100} required defaultValue={item?.score??0}/></label>
-  </div>
-  <label className="block text-sm">Original public source URL<input className={input} type="url" name="url" required maxLength={500} defaultValue={item?.url??""} placeholder="https://x.com/Analyst/status/123..."/></label>
-  <label className="block text-sm">Original X handle or research provider<input className={input} name="source_handle" maxLength={15} required defaultValue={item?.source_handle??""} placeholder="Barchart"/></label>
-  <label className="block text-sm">Editorial headline<input className={input} name="title" minLength={12} maxLength={130} required defaultValue={item?.title??""}/></label>
-  <label className="block text-sm">Finding / key figures<textarea className={input} name="summary" minLength={30} maxLength={950} rows={3} required defaultValue={item?.summary??""}/></label>
-  <label className="block text-sm">Why it matters<textarea className={input} name="why_it_matters" minLength={20} maxLength={650} rows={2} required defaultValue={item?.why_it_matters??""}/></label>
-  <label className="block text-sm">Interpretation limits and uncertainties<textarea className={input} name="limitations" minLength={20} maxLength={650} rows={2} required defaultValue={item?.limitations??""}/></label>
-  <div className="grid gap-3 sm:grid-cols-2">
-   <label className="block text-sm">Original publication (UTC ISO timestamp, or YYYY-MM-DD if time unverified)<input className={input} name="published_at_utc" type="text" maxLength={24} required defaultValue={item?.published_at_utc??""} placeholder="2026-11-20T16:01:00.000Z or 2026-11-20"/></label>
-   <label className="block text-sm">Proposed edition date (UTC)<input className={input} name="edition_date" type="date" required defaultValue={item?.edition_date??new Date().toISOString().slice(0,10)}/></label>
-  </div>
-  <fieldset className="space-y-2 rounded-lg border border-slate-700 p-3"><legend className="px-1 text-sm font-semibold">Editorial evidence checklist</legend>
-   <p className="text-xs text-slate-400">Tick only what has actually been checked. All six are necessary before an item can be marked review-approved.</p>
-   {evidenceFields.map(([name,label])=><label className="flex items-start gap-2 text-sm" key={name}><input name="evidence" type="checkbox" value={name} defaultChecked={!!item?.evidence[name]} className="mt-1"/>{label}</label>)}
-  </fieldset>
- </div>
+export const metadata:Metadata={title:"Research & VIP Publishing | CryptoMainly",robots:{index:false,follow:false,nocache:true}};
+const panel="rounded-xl border border-slate-700 bg-slate-900/80 p-5 md:p-6";
+const input="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2.5 text-base text-white focus:border-sky-400";
+const sub="block text-sm font-medium text-slate-300";
+const button="rounded-lg border border-slate-500 px-4 py-2.5 font-semibold text-slate-100 hover:border-sky-400";
+function Hidden({token,version,action,id=""}:{token:string;version:string;action:string;id?:string}){return <><input type="hidden" name="csrf" value={csrf(token)}/><input type="hidden" name="version" value={version}/><input type="hidden" name="action" value={action}/><input type="hidden" name="id" value={id}/></>}
+function SourceVisual({item}:{item:QueueItem}){
+ const id=item.url.match(/^https:\/\/x\.com\/[A-Za-z0-9_]+\/status\/(\d{14,24})$/)?.[1];
+ return <div className="overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+  <div className="flex items-center justify-between gap-2 border-b border-slate-700 px-4 py-3 text-sm"><strong>Original research / images</strong><a className="text-sky-300 underline" href={item.url} target="_blank" rel="noopener noreferrer">Open original source</a></div>
+  {item.vip_image_url?<img className="mx-auto max-h-[460px] w-full object-contain" src={item.vip_image_url} alt={"Owner-provided illustration for "+item.title} loading="lazy"/>:
+   id?<div><iframe title={"Official source preview for "+item.title} src={"https://platform.twitter.com/embed/Tweet.html?id="+id+"&theme=dark"} loading="lazy" className="h-[390px] w-full border-0" sandbox="allow-scripts allow-same-origin allow-popups"/><p className="px-4 pb-3 text-xs text-slate-400">Official embedded X post may show its original charts. If X restricts embedding, use “Open original source.”</p></div>:
+   <div className="space-y-3 p-5"><p className="text-slate-200">Open the original provider research to see its charts, infographics and methodology.</p><p className="break-words text-sm text-sky-300">{item.source_handle} · original research article</p><p className="text-xs text-slate-400">Third-party graphics are linked rather than copied into CryptoMainly. An authorised CryptoMainly-hosted image can be added below.</p></div>}
+ </div>;
 }
-function Reason({defaultValue="Editorial review of original-source evidence"}:{defaultValue?:string}){return <label className="block text-sm">Editorial audit reason<input name="reason" className={input} minLength={8} maxLength={200} required defaultValue={defaultValue}/></label>}
-function Confirm({text,disabled}:{text:string;disabled:boolean}){return <><label className="flex gap-2 text-xs text-slate-300"><input name="confirm" value="yes" type="checkbox" required disabled={disabled}/>I have reviewed and confirm this internal editorial action.</label><button className={action} disabled={disabled}>{text}</button></>}
-function Decision({token,version,item,op,button,disabled}:{token:string;version:string;item:QueueItem;op:string;button:string;disabled:boolean}){return <form method="post" action="/admin/market-intelligence/queue/action" className="space-y-2 rounded-lg border border-slate-700 p-3"><Meta token={token} version={version} op={op} id={item.id}/><Reason defaultValue={op==="approve"?"Original source and quality gates reviewed":"Editorial review decision"}/><Confirm text={button} disabled={disabled}/></form>}
-function Preview({snapshot}:{snapshot:QueueSnapshot}){
- const days=[...new Set(snapshot.state.items.map(x=>x.edition_date))].sort().reverse();
- return <section className={panel+" space-y-3"}>
-  <h2 className="text-xl font-semibold">Private edition planning</h2>
-  <p className="text-sm text-slate-300">Only review-approved observations appear in an edition plan. Plans are <strong>not public website editions</strong>; no Telegram bot or Make scenario is called.</p>
-  {days.length===0?<p className="text-sm text-slate-400">No proposed editions yet.</p>:days.map(date=>{
-   const items=editionDraft(snapshot.state,date,snapshot.source);
-   return <div className="border-t border-slate-700 pt-3" key={date}><h3 className="font-medium">{date} · {items.length} review-approved</h3><Link href={"/admin/market-intelligence/queue/preview/"+date} className="mt-1 inline-block text-sm text-sky-300 underline">Open protected edition preview (no publishing)</Link>
-    {items.length===0?<p className="text-xs text-slate-400">No approved observations.</p>:<ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{items.map(x=><li key={x.id}>{x.title} <span className="text-slate-400">({x.kind}{x.vip_highlight?", VIP highlight nominated":""})</span></li>)}</ul>}
-   </div>
-  })}
- </section>
+function EditFields({item}:{item?:QueueItem}){
+ return <div className="space-y-4">
+  <div className="grid gap-3 md:grid-cols-3">
+   <label className={sub}>Research category<select className={input} name="kind" defaultValue={item?.kind??"data"}><option value="technical">Technical price chart</option><option value="data">On-chain / quantitative insight</option></select></label>
+   <label className={sub}>Market<select className={input} name="market" defaultValue={item?.market??"crypto"}><option value="crypto">Crypto</option><option value="stocks">Stocks</option><option value="macro">Macro</option></select></label>
+   <label className={sub}>Editorial score<input className={input} name="score" type="number" min={0} max={100} required defaultValue={item?.score??80}/></label>
+  </div>
+  <label className={sub}>Original source link<input className={input} name="url" type="url" maxLength={500} required defaultValue={item?.url??""}/></label>
+  <label className={sub}>Original author / provider<input className={input} name="source_handle" maxLength={15} required defaultValue={item?.source_handle??""}/></label>
+  <label className={sub}>Headline<input className={input} name="title" minLength={12} maxLength={130} required defaultValue={item?.title??""}/></label>
+  <label className={sub}>Overview / key figures<textarea className={input} name="summary" minLength={30} maxLength={950} rows={3} required defaultValue={item?.summary??""}/></label>
+  <label className={sub}>Why this matters<textarea className={input} name="why_it_matters" minLength={20} maxLength={650} rows={2} required defaultValue={item?.why_it_matters??""}/></label>
+  <label className={sub}>Context / important limitations<textarea className={input} name="limitations" minLength={20} maxLength={650} rows={2} required defaultValue={item?.limitations??""}/></label>
+  <div className="grid gap-3 md:grid-cols-2">
+   <label className={sub}>Source publication date / UTC<input className={input} name="published_at_utc" maxLength={24} required defaultValue={item?.published_at_utc??""} placeholder="2026-11-20 or 2026-11-20T16:01:00.000Z"/></label>
+   <label className={sub}>Research edition date<input className={input} name="edition_date" type="date" required defaultValue={item?.edition_date??new Date().toISOString().slice(0,10)}/></label>
+  </div>
+  <label className={sub}>VIP Telegram message (edit freely)<textarea className={input+" font-mono text-sm"} name="vip_post_text" maxLength={2400} rows={8} defaultValue={item?(item.vip_post_text||composeVipText(item).replace("\n\nOriginal source: "+item.url,"")):""} placeholder="Write your individual VIP summary here. The original source link is always appended automatically."/></label>
+  <label className={sub}>Optional CryptoMainly-hosted image link (owned or licensed)
+   <input className={input} name="vip_image_url" maxLength={500} type="url" defaultValue={item?.vip_image_url??""} placeholder="https://www.cryptomainly.co.uk/assets/market-intelligence/your-chart.png"/>
+   <span className="mt-1 block text-xs font-normal text-slate-400">Only images hosted in CryptoMainly’s Market Intelligence assets are accepted. Without an image, Telegram can show a preview of the original source link when supported. Do not upload or repost unlicensed charts.</span>
+  </label>
+ </div>;
 }
-export default async function Page({searchParams}:{searchParams?:{error?:string;saved?:string;imported?:string;existing?:string}}){
- const token=await session();
- if(!token)return <main className="min-h-screen bg-[#07111f] p-8 text-slate-100"><h1 className="mb-3 text-2xl">Editorial review queue</h1><p>Sign in to Market Intelligence administration before reviewing private research.</p><Link href="/admin/market-intelligence" className="text-sky-300 underline">Administrator login</Link></main>;
- let snap:QueueSnapshot;try{snap=await readQueue()}catch{return <main className="min-h-screen bg-[#07111f] p-8 text-slate-100"><h1 className="text-xl">Private editorial queue unavailable</h1><p>Changes are blocked until its separate storage can be verified.</p><Link href="/admin/market-intelligence" className="text-sky-300 underline">Return to administration</Link></main>}
- const count=snap.state.items.filter(i=>i.status==="approved_for_review").length;
- const unpublished=snap.state.items.filter(i=>i.vip_highlight).length;
- const disabled=!snap.writable;
- return <main className="min-h-screen bg-[#07111f] px-4 py-10 text-slate-100"><div className="mx-auto max-w-5xl space-y-6">
-  <header><p className="text-xs uppercase tracking-widest text-amber-300">CryptoMainly · Private editorial workflow · Development</p><h1 className="mt-2 text-3xl font-semibold">Research review queue</h1><p className="mt-2 text-sm text-slate-300">Prepare chart and data-insight research for editorial approval. This feature does not publish to the public site or Telegram.</p><Link href="/admin/market-intelligence" className="mt-3 inline-block text-sm text-sky-300 underline">Back to editorial administration</Link></header>
-  <section className={panel}><p>{snap.state.items.length} research candidates · {count} review-approved · {unpublished} VIP highlight nominations</p><p className="mt-2 text-xs text-slate-400">Source roster: {snap.source.accounts.length} approved X accounts. Queue version: {snap.version==="missing"?"Not yet created":snap.version}. {disabled?"Read-only environment":""}</p>
-   {searchParams?.saved==="1"&&<p role="status" className="mt-2 text-emerald-300">Private editorial change saved; no content published.</p>}
-   {searchParams?.error&&<p role="alert" className="mt-2 text-rose-300">{searchParams.error==="stale"?"The queue changed. Please inspect the latest version and try again.":searchParams.error==="confirm"?"Confirm the editorial action before submitting.":searchParams.error==="approval"?"Review approval blocked: the item has unmet verification requirements. Check the list beside its card, then use Edit details and evidence to record genuine completed checks.":"Change not confirmed. If you were importing a scan, check the JSON, source URLs, timestamps and registry revision; otherwise verify the form and try again."}</p>}
-  </section>
-  <details className={panel}><summary className="cursor-pointer text-lg font-semibold text-amber-200">Import scanner research (up to 12 candidates)</summary>
-   <p className="mt-3 text-sm text-slate-300">Paste a complete JSON research batch supplied by the CryptoMainly Chart Scanner. This is an owner-authenticated import, not an unattended feed. All imported items remain <strong>unapproved candidates</strong>: they cannot publish an edition or send Telegram messages.</p>
-   <p className="mt-2 text-xs text-slate-400">The exact current 14-account registry revision must match the batch, and original canonical links, dates, content quality, age, duplicates and history are checked before anything is saved. Running the same batch twice will skip already queued links without overwriting your edits.</p>
-   <form method="post" action="/admin/market-intelligence/queue/import" className="mt-3 space-y-3">
-    <input type="hidden" name="csrf" value={csrf(token)}/><input type="hidden" name="version" value={snap.version}/>
-    <label className="block text-sm">Complete scanner JSON<textarea className={input+" mt-2 font-mono text-xs"} name="scan_payload" rows={9} maxLength={24000} required placeholder={'{"schema":"cryptomainly-scanner-review-intake-v1","scan_id":"...","generated_at_utc":"...","source_registry_revision":"...","items":[...]}'}/></label>
-    <button disabled={disabled} className={action}>Import for private editorial review (NO publishing)</button>
+function CandidateCard({item,token,version,writable,connected,connectionReason}:{item:QueueItem;token:string;version:string;writable:boolean;connected:boolean;connectionReason:string}){
+ const sent=item.vip_delivery?.status==="sent";
+ const pending=!!item.vip_delivery&&!sent;
+ const locked=sent||pending||item.status==="rejected"||!writable;
+ return <article className={panel+" space-y-4"} id={"research-"+item.id}>
+  <div className="flex flex-wrap items-center justify-between gap-2">
+   <div className="flex flex-wrap items-center gap-2 text-sm text-slate-300"><span className="rounded-full border border-slate-600 px-2 py-1">{item.kind==="technical"?"Technical chart":"On-chain / quantitative"}</span><span>{item.market}</span><span>{item.edition_date}</span></div>
+   <strong className={sent?"text-emerald-300":pending?"text-amber-200":item.status==="rejected"?"text-rose-300":"text-sky-300"}>{sent?"Sent to VIP":pending?"Delivery status needs checking":item.status==="rejected"?"Rejected":"Ready for your review"}</strong>
+  </div>
+  <h2 className="text-2xl font-semibold leading-snug">{item.title}</h2>
+  <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.9fr)]">
+   <div className="space-y-3 text-base leading-relaxed"><p>{item.summary}</p><p><strong>Why it matters:</strong> {item.why_it_matters}</p><p className="text-sm text-amber-100"><strong>Context:</strong> {item.limitations}</p><p className="text-sm text-slate-400">By @{item.source_handle} · {item.published_at_utc}</p></div>
+   <SourceVisual item={item}/>
+  </div>
+  <details className="rounded-lg border border-slate-700 bg-slate-950/40 p-4">
+   <summary className="cursor-pointer text-lg font-semibold text-sky-200">Edit post and prepare VIP message</summary>
+   <form method="post" action="/admin/market-intelligence/queue/action" className="mt-4 space-y-5">
+    <Hidden token={token} version={version} action={item.status==="rejected"?"reopen":"edit"} id={item.id}/>
+    <EditFields item={item}/>
+    <input type="hidden" name="reason" value="Owner updated editorial draft and individual VIP message"/>
+    <label className="flex items-start gap-3 rounded-lg border border-slate-600 bg-slate-900 p-3 text-sm">
+     <input type="checkbox" name="confirm" value="yes" required className="mt-1"/>
+     <span>I have reviewed this post, its original source and any image-sharing permissions, and confirm this action.</span>
+    </label>
+    <div className="flex flex-wrap items-center gap-3">
+     <button className={button} disabled={!writable||item.status==="rejected"} type="submit">Save edits</button>
+     <button type="submit" formAction="/admin/market-intelligence/queue/send" disabled={locked||!connected} className="rounded-lg bg-emerald-500 px-6 py-3 font-bold text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">{sent?"Already sent to VIP":pending?"Check delivery before resending":"Send to VIP"}</button>
+    </div>
+    {!connected&&!sent&&<p className="text-sm text-amber-300">{connectionReason} Sending cannot be enabled by ticking the box alone.</p>}
+    {sent&&<p className="text-sm text-emerald-300">Telegram confirmed message #{item.vip_delivery?.telegram_message_id}. Editing this record will not modify or resend that Telegram message.</p>}
+    {pending&&<p className="text-sm text-amber-300">The outbound attempt was reserved. Do not retry until its Telegram outcome is reconciled.</p>}
+    <p className="text-xs text-slate-400">This sends one individual highlight to VIP. It does not automatically publish a dated Market Intelligence website edition.</p>
    </form>
   </details>
-  {searchParams?.imported!==undefined&&<p role="status" className="rounded-xl border border-emerald-700 bg-slate-900 px-5 py-3 text-sm text-emerald-200">Scanner import processed. Confirm the current research cards and source links below; no approvals or publication.</p>}
-  <Preview snapshot={snap}/>
-  <details className={panel}><summary className="cursor-pointer font-semibold text-amber-200">Add a private research candidate</summary>
-   <form method="post" action="/admin/market-intelligence/queue/action" className="mt-4 space-y-4"><Meta token={token} version={snap.version} op="add"/><fieldset disabled={disabled} className="space-y-4"><Fields/><Reason/><Confirm text="Save as private candidate" disabled={disabled}/></fieldset></form>
+  {item.status==="rejected"&&<p className="text-sm text-rose-300">Rejected research cannot be sent. Reopen it in the legacy editorial controls if needed.</p>}
+ </article>;
+}
+export default async function Page({searchParams}:{searchParams?:{error?:string;saved?:string;imported?:string;existing?:string;vip?:string}}){
+ const token=await session();
+ if(!token)return <main className="min-h-screen bg-[#07111f] p-8 text-slate-100"><h1 className="text-2xl">Research & VIP publishing</h1><p>Administrator login is required.</p><Link href="/admin/market-intelligence" className="text-sky-300 underline">Administrator login</Link></main>;
+ let snap:QueueSnapshot;try{snap=await readQueue()}catch{return <main className="min-h-screen bg-[#07111f] p-8 text-slate-100">Private editorial queue is temporarily unavailable. No messages were sent.</main>}
+ const vip=vipConfig(),sent=snap.state.items.filter(x=>x.vip_delivery?.status==="sent").length;
+ return <main className="min-h-screen bg-[#07111f] px-4 py-10 text-slate-100"><div className="mx-auto max-w-6xl space-y-6">
+  <header className="space-y-2"><p className="text-xs uppercase tracking-widest text-sky-300">CryptoMainly · Private editorial administrator</p><h1 className="text-3xl font-bold">Market Intelligence · VIP highlights</h1><p className="text-slate-300">Read the research and original chart, adjust any wording, confirm and send the individual highlight to VIP in one action.</p><Link href="/admin/market-intelligence" className="text-sm text-sky-300 underline">Back to administrator</Link></header>
+  <section className={panel}><div className="flex flex-wrap gap-4 text-base"><span><strong>{snap.state.items.length}</strong> research items</span><span><strong>{sent}</strong> sent to VIP</span><span><strong>{snap.source.accounts.length}</strong> approved X sources</span></div><p className={"mt-3 text-sm "+(vip.enabled?"text-emerald-300":"text-amber-200")}>{vip.enabled?"VIP sending is configured. Each confirmed click delivers one message.":vip.reason}</p></section>
+  {searchParams?.vip==="sent"&&<p role="status" className="rounded-lg border border-emerald-700 p-4 text-emerald-300">Telegram confirmed delivery of your VIP highlight. The post is recorded as sent.</p>}
+  {searchParams?.saved==="1"&&<p role="status" className="rounded-lg border border-sky-700 p-4 text-sky-300">Draft saved. No message sent.</p>}
+  {searchParams?.error&&<p role="alert" className="rounded-lg border border-rose-700 p-4 text-rose-300">{searchParams.error==="vip_unknown"?"Telegram delivery outcome is uncertain. Check the VIP chat before taking any action; automatic retry is blocked.":searchParams.error==="vip_disabled"?"VIP sending is not configured. Your draft remains private.":searchParams.error==="stale"?"This draft has been updated since the page loaded. Refresh and review it before sending.":searchParams.error==="confirm"?"Confirm the post before sending it.":"The editorial change could not be saved. Check the required fields and source URL; nothing was sent."}</p>}
+  <details className={panel}><summary className="cursor-pointer font-semibold text-lg text-sky-300">Add a new research candidate</summary>
+   <form method="post" action="/admin/market-intelligence/queue/action" className="mt-4 space-y-4"><Hidden token={token} version={snap.version} action="add"/><EditFields/><input type="hidden" name="reason" value="Owner added one private market intelligence candidate"/><label className="flex items-center gap-3 text-sm"><input name="confirm" type="checkbox" value="yes" required/>I confirm this draft is ready to save privately.</label><button className={button}>Add candidate</button></form>
   </details>
-  <section className="space-y-3"><h2 className="text-xl font-semibold">Research items</h2>{snap.state.items.length===0&&<p className="text-sm text-slate-400">No candidates yet. Nothing has been sent or published.</p>}
-   {[...snap.state.items].sort((a,b)=>b.created_at_utc.localeCompare(a.created_at_utc)).map(i=>{const pending=i.status==="candidate"?approvalBlockers(i,snap.source):[];return <article key={i.id} className={panel+" space-y-3"}>
-    <div><div className="flex flex-wrap gap-3 text-xs text-slate-400"><span>{i.kind==="technical"?"Technical price chart":"Data / on-chain insight"}</span><span>{i.market}</span><span>{i.edition_date}</span><span>{i.score}/100</span><span className={i.status==="approved_for_review"?"text-emerald-300":i.status==="rejected"?"text-rose-300":"text-amber-200"}>{i.status.replaceAll("_"," ")}</span></div><h3 className="mt-2 text-lg font-semibold">{i.title}</h3><p className="mt-1 text-sm text-slate-300">{i.summary}</p><p className="mt-2 text-sm text-slate-300">Why: {i.why_it_matters}</p><p className="mt-1 text-sm text-amber-100">Limitations: {i.limitations}</p><a className="mt-2 inline-block break-all text-sm text-sky-300 underline" href={i.url} target="_blank" rel="noopener noreferrer">Original public research · @{i.source_handle}</a><p className="text-xs text-slate-400">UTC {i.published_at_utc} · Evidence {Object.values(i.evidence).filter(Boolean).length}/6{!i.published_at_utc.includes("T")?" · Exact UTC time pending":""} · {i.vip_highlight?"VIP highlight nominated (not sent)":"No highlight nominated"}</p></div>
-    {pending.length>0&&<section className="rounded-lg border border-amber-500/40 bg-slate-950/60 p-3" aria-label={"Outstanding approval requirements for "+i.title}>
-      <p className="text-sm font-semibold text-amber-200">Not ready for review approval — {pending.length} requirement(s) outstanding</p>
-      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">{pending.map(reason=><li key={reason}>{reason}</li>)}</ul>
-      <p className="mt-2 text-xs text-slate-300">Open “Edit details and evidence” below, verify each outstanding point, tick only genuinely completed checks and save your edits. Approval remains separate from public publication or VIP delivery.</p>
-    </section>}
-    <details className="border-t border-slate-700 pt-3"><summary className="cursor-pointer text-amber-200">Edit details and evidence</summary><form method="post" action="/admin/market-intelligence/queue/action" className="mt-3 space-y-4"><Meta token={token} version={snap.version} op="edit" id={i.id}/><fieldset disabled={disabled} className="space-y-4"><Fields item={i}/><Reason defaultValue="Evidence correction or updated editorial analysis"/><Confirm text="Save edits (return to candidate status)" disabled={disabled}/></fieldset></form></details>
-    <div className="grid gap-3 sm:grid-cols-2">
-     {i.status==="candidate"&&<Decision item={i} token={token} version={snap.version} op="approve" button={pending.length>0?"Complete evidence checks before approval":"Mark review-approved (NOT publish)"} disabled={disabled||pending.length>0}/>}
-     {i.status!=="rejected"&&<Decision item={i} token={token} version={snap.version} op="reject" button="Reject candidate" disabled={disabled}/>}
-     {i.status==="rejected"&&<Decision item={i} token={token} version={snap.version} op="reopen" button="Reopen for review" disabled={disabled}/>}
-     {i.status==="approved_for_review"&&<Decision item={i} token={token} version={snap.version} op={i.vip_highlight?"unhighlight":"highlight"} button={i.vip_highlight?"Remove VIP highlight nomination":"Nominate VIP highlight (NOT send)"} disabled={disabled}/>}
-    </div>
-   </article>})}
-  </section>
-  <section className={panel}><h2 className="text-lg font-semibold">Audit history</h2><p className="mt-1 text-xs text-slate-400">All operations are internal; no membership data, publication or Telegram actions.</p><ul className="mt-3 space-y-2 text-xs">{[...snap.state.audit].reverse().slice(0,25).map((a,j)=><li className="break-all border-t border-slate-700 pt-2" key={j}>{a.utc} · {a.action} · {a.item_id} · {a.reason}</li>)}</ul></section>
- </div></main>
+  {snap.state.items.length===0?<section className={panel}>No research candidates yet.</section>:<section className="space-y-6">{[...snap.state.items].sort((a,b)=>b.created_at_utc.localeCompare(a.created_at_utc)).map(i=><CandidateCard key={i.id} item={i} token={token} version={snap.version} writable={snap.writable} connected={vip.enabled} connectionReason={vip.reason}/>)}</section>}
+  <details className={panel}><summary className="cursor-pointer text-lg font-semibold text-sky-300">Import scanner research (up to 12 candidates)</summary><p className="mt-2 text-sm text-slate-300">Scanner imports remain private. Importing does not send a post.</p>
+   <form method="post" action="/admin/market-intelligence/queue/import" className="mt-3 space-y-3"><input type="hidden" name="csrf" value={csrf(token)}/><input type="hidden" name="version" value={snap.version}/><textarea className={input+" font-mono text-xs"} name="scan_payload" rows={6} maxLength={24000} required placeholder="Paste one complete scanner JSON batch here"/><button className={button}>Import candidates</button></form>
+  </details>
+  <details className={panel}><summary className="cursor-pointer text-lg font-semibold text-sky-300">Review audit history</summary><ul className="mt-3 space-y-2 text-sm">{[...snap.state.audit].reverse().slice(0,30).map((a,i)=><li key={i} className="border-b border-slate-700 py-1">{a.utc} · {a.action} · {a.reason}</li>)}</ul></details>
+ </div></main>;
 }

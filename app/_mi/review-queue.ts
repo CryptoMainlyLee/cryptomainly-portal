@@ -7,16 +7,29 @@ export type Kind="technical"|"data";
 export type Market="crypto"|"stocks"|"macro";
 export type Status="candidate"|"approved_for_review"|"rejected";
 export type Evidence={original_source:boolean;timestamp:boolean;visual_or_data:boolean;methodology:boolean;rights:boolean;uk_review:boolean};
-export type QueueItem={id:string;kind:Kind;market:Market;status:Status;url:string;source_handle:string;title:string;summary:string;why_it_matters:string;limitations:string;published_at_utc:string;edition_date:string;score:number;evidence:Evidence;vip_highlight:boolean;created_at_utc:string;updated_at_utc:string};
+export type VipDelivery={status:"reserved"|"sent"|"unknown";request_id:string;reserved_at_utc:string;finished_at_utc?:string;telegram_message_id?:number};
+export type QueueItem={id:string;kind:Kind;market:Market;status:Status;url:string;source_handle:string;title:string;summary:string;why_it_matters:string;limitations:string;published_at_utc:string;edition_date:string;score:number;evidence:Evidence;vip_highlight:boolean;vip_post_text?:string;vip_image_url?:string;vip_delivery?:VipDelivery;created_at_utc:string;updated_at_utc:string};
 type Audit={utc:string;action:string;item_id:string;reason:string};
 export type QueueState={schema:"cryptomainly-editorial-queue-v1";revision_sha256:string;updated_at_utc:string;items:QueueItem[];audit:Audit[]};
 export type QueueSnapshot={state:QueueState;version:string;writable:boolean;source:SourceState};
-export type QueueInput={action:string;id:string;kind:string;market:string;url:string;source_handle:string;title:string;summary:string;why_it_matters:string;limitations:string;published_at_utc:string;edition_date:string;score:string;evidence:string[];reason:string;confirm:string};
+export type QueueInput={action:string;id:string;kind:string;market:string;url:string;source_handle:string;title:string;summary:string;why_it_matters:string;limitations:string;published_at_utc:string;edition_date:string;score:string;evidence:string[];reason:string;confirm:string;vip_post_text?:string;vip_image_url?:string};
 const filename="editorial-queue-v1.json";
 const modeSet=new Set(["off","local","preview","production"]);
 const handles=/^[A-Za-z0-9_]{1,15}$/;
 const iso=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const day=/^20\d{2}-\d{2}-\d{2}$/;
+export function vipImageUrl(value:string){
+ if(!value)return "";
+ if(value.length>500)throw Error("VIP image link is too long");
+ let url:URL;try{url=new URL(value)}catch{throw Error("Invalid image URL")}
+ if(url.protocol!=="https:"||url.username||url.password||url.port||url.hash||url.search||!["www.cryptomainly.co.uk","cryptomainly.co.uk"].includes(url.hostname.toLowerCase())||!/^\/assets\/market-intelligence\/[A-Za-z0-9_\/-]+\.(?:png|jpe?g|webp)$/i.test(url.pathname))throw Error("VIP images must be approved first-party CryptoMainly assets");
+ return url.href;
+}
+export function vipPostCopy(value:string){
+ if(value.length>2400||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value))throw Error("Invalid VIP message copy");
+ return value.trim();
+}
+
 const fields:ReadonlyArray<keyof Evidence>=["original_source","timestamp","visual_or_data","methodology","rights","uk_review"];
 const textOK=(v:unknown,min:number,max:number)=>typeof v==="string"&&v.trim()===v&&v.length>=min&&v.length<=max&&!/[\u0000-\u001f\u007f]/.test(v);
 const dateOK=(s:string)=>iso.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString().slice(0,19)===s.slice(0,19);
@@ -50,6 +63,14 @@ export function validateQueue(value:any):QueueState{
   if(!i.evidence||Object.keys(i.evidence).length!==fields.length||!fields.every(f=>typeof i.evidence[f]==="boolean"))throw Error("Invalid editorial evidence");
   if(i.status!=="approved_for_review"&&i.vip_highlight)throw Error("Highlight must be review-approved");
   if(i.status==="approved_for_review"&&(i.score<80||!fields.every(f=>i.evidence[f])))throw Error("Approved item lacks evidence");
+  if(i.vip_post_text!==undefined&&(typeof i.vip_post_text!=="string"||i.vip_post_text!==vipPostCopy(i.vip_post_text)))throw Error("Invalid VIP draft text");
+  if(i.vip_image_url!==undefined&&(typeof i.vip_image_url!=="string"||i.vip_image_url!==vipImageUrl(i.vip_image_url)))throw Error("Invalid first-party image");
+  if(i.vip_delivery!==undefined){
+   const v=i.vip_delivery;
+   if(!v||!["reserved","sent","unknown"].includes(v.status)||typeof v.request_id!=="string"||!/^[0-9a-f-]{36}$/.test(v.request_id)||!dateOK(v.reserved_at_utc))throw Error("Invalid VIP send reservation");
+   if(v.status==="sent"&&(!dateOK(v.finished_at_utc)||!Number.isSafeInteger(v.telegram_message_id)||v.telegram_message_id<=0))throw Error("Invalid VIP sent receipt");
+   if(v.status==="unknown"&&!dateOK(v.finished_at_utc))throw Error("Invalid VIP uncertain receipt");
+  }
   return {...i,evidence:{...i.evidence}};
  });
  for(const a of value.audit){if(!a||!dateOK(a.utc)||!textOK(a.action,3,32)||!textOK(a.item_id,8,40)||!textOK(a.reason,8,200))throw Error("Invalid queue audit")}
@@ -135,7 +156,7 @@ export function updateQueue(current:QueueState,input:QueueInput,sources:SourceSt
   if(action==="edit"&&position<0)throw Error("Unknown queue item");
   if(action==="add"&&input.id)throw Error("Cannot select ID when adding");
   const url=sourceIdentity(input.url);
-  if(historicUrls.some(raw=>sourceIdentity(raw).url.toLowerCase()===url.url.toLowerCase()))throw Error("This original source was already published in the historical archive");
+  if(historicUrls.some(raw=>sourceIdentity(raw).url.toLowerCase()===url.url.toLowerCase())&&(action==="add"||url.url.toLowerCase()!==n.items[position].url.toLowerCase()))throw Error("This original source was already published in the historical archive");
   if(!handles.test(input.source_handle)||url.handle&&url.handle.toLowerCase()!==input.source_handle.toLowerCase())throw Error("Source handle inconsistent with original X URL");
   const score=Number(input.score);
   if(!Number.isInteger(score)||score<0||score>100)throw Error("Invalid editorial score");
@@ -145,7 +166,10 @@ export function updateQueue(current:QueueState,input:QueueInput,sources:SourceSt
   if(new Set(input.evidence).size!==input.evidence.length||!input.evidence.every(k=>fields.includes(k as keyof Evidence)))throw Error("Invalid evidence names");
   if(n.items.some((x,i)=>i!==position&&x.url.toLowerCase()===url.url.toLowerCase()))throw Error("Original source already in queue");
   id=action==="add"?randomUUID():n.items[position].id;
-  const item:QueueItem={id,kind:input.kind as Kind,market:input.market as Market,status:"candidate",url:url.url,source_handle:input.source_handle,title:input.title,summary:input.summary,why_it_matters:input.why_it_matters,limitations:input.limitations,published_at_utc:input.published_at_utc,edition_date:input.edition_date,score,evidence,vip_highlight:false,created_at_utc:action==="add"?at:n.items[position].created_at_utc,updated_at_utc:at};
+  const item:QueueItem={id,kind:input.kind as Kind,market:input.market as Market,status:"candidate",url:url.url,source_handle:input.source_handle,title:input.title,summary:input.summary,why_it_matters:input.why_it_matters,limitations:input.limitations,published_at_utc:input.published_at_utc,edition_date:input.edition_date,score,evidence,vip_highlight:false,created_at_utc:action==="add"?at:n.items[position].created_at_utc,updated_at_utc:at,
+   vip_post_text:vipPostCopy(input.vip_post_text??(action==="edit"?n.items[position].vip_post_text??"":"")),
+   vip_image_url:vipImageUrl(input.vip_image_url??(action==="edit"?n.items[position].vip_image_url??"":"")),
+   ...(action==="edit"&&n.items[position].vip_delivery?{vip_delivery:n.items[position].vip_delivery}:{})};
   if(action==="add")n.items.push(item);else n.items[position]=item;
  }else{
   if(position<0)throw Error("Unknown queue item");
