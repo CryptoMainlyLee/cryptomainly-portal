@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
 const root=path.resolve(__dirname,'..'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cm-editorial-v119-')),stateFile=path.join(tmp,'registry.json');
 const seed=JSON.parse(fs.readFileSync(path.join(root,'app/_mi/seed-registry.json'),'utf8'));fs.writeFileSync(stateFile,JSON.stringify({...seed,editorial_visibility:{schema_version:1,hidden_edition_slugs:[],hidden_post_ids_by_edition:{}},editorial_audit:[]}));
 const secret=crypto.randomBytes(32).toString('base64url'),origin='http://127.0.0.1:3197',admin='/admin/market-intelligence',latest='/vip/market-intelligence',edition=latest+'/archive/2026-11-15',asset='/assets/market-intelligence/2026-11-15-telegram.png',hidden='2121688198112067943',other='2121674564476309524';
-const env={...process.env,MI_EDITORIAL_MODE:'local',MI_EDITORIAL_TEST_FILE:stateFile,MI_EDITORIAL_ACCESS_KEY:secret,CM_ADMIN_PASSWORD:'synthetic-review-local-only',NODE_ENV:'production'};
+const env={...process.env,MI_EDITORIAL_MODE:'local',MI_EDITORIAL_TEST_FILE:stateFile,MI_EDITORIAL_ACCESS_KEY:'OBSOLETE_TEST_KEY_DO_NOT_ACCEPT',CM_ADMIN_PASSWORD:secret,NODE_ENV:'production'};
 delete env.VERCEL;delete env.VERCEL_ENV;delete env.MI_EDITORIAL_GITHUB_TOKEN;
 const server=spawn(process.execPath,[path.join(root,'node_modules/next/dist/bin/next'),'start','-p','3197','-H','127.0.0.1'],{cwd:root,env,stdio:['ignore','pipe','pipe'],windowsHide:true});let log='';server.stdout.on('data',b=>log+=b);server.stderr.on('data',b=>log+=b);const wait=ms=>new Promise(r=>setTimeout(r,ms));let count=0;let cookie='';
 async function get(p,headers={}){return fetch(origin+p,{redirect:'manual',headers});}

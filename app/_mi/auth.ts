@@ -3,7 +3,12 @@ import { createHash,createHmac,randomBytes,timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 export const editorPath="/admin/market-intelligence";
 const name="cm_mi_editor";
-function secret(){const s=process.env.MI_EDITORIAL_ACCESS_KEY;return s&&/^[A-Za-z0-9_-]{43,128}$/.test(s)?s:null}
+// Both administrator areas use the same server-side password source.
+// Keep their session cookies and permissions separate.
+function secret(){
+ const s=process.env.CM_ADMIN_PASSWORD;
+ return typeof s==="string"&&s.length>0&&s.length<=256?s:null;
+}
 export function configured(){return !!secret()}
 function mac(data:string){const key=secret();if(!key)throw Error("Editorial access not configured");return createHmac("sha256",key).update(data).digest("hex")}
 function equal(a:string,b:string){return timingSafeEqual(createHash("sha256").update(a).digest(),createHash("sha256").update(b).digest())}
