@@ -1,5 +1,5 @@
 import {csrfOK,form,session,trustedOrigin} from "../../../../_mi/auth";
-import {readQueue,updateQueue,writeQueue} from "../../../../_mi/review-queue";
+import {approvalBlockers,readQueue,updateQueue,writeQueue} from "../../../../_mi/review-queue";
 import {EDITORIAL_SOURCE_EDITIONS} from "../../../../vip/market-intelligence/editions";
 export const dynamic="force-dynamic";
 const route="/admin/market-intelligence/queue";
@@ -14,6 +14,10 @@ export async function POST(req:Request){
   if(!snap.writable)return new Response("Changes disabled",{status:503});
   if(snap.version!==data.get("version"))return redirect(req,"?error=stale");
   const get=(x:string)=>data.get(x)??"";
+  if(get("action")==="approve"){
+   const candidate=snap.state.items.find(x=>x.id===get("id"));
+   if(!candidate||approvalBlockers(candidate,snap.source).length)return redirect(req,"?error=approval");
+  }
   const next=updateQueue(snap.state,{
    action:get("action"),id:get("id"),kind:get("kind"),market:get("market"),
    url:get("url").trim(),source_handle:get("source_handle").trim().replace(/^@/,""),

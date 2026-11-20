@@ -102,6 +102,29 @@ export async function writeQueue(expected:string,next:QueueState){
  if(!res.ok)throw Error("Private queue change not confirmed; reload");
  const j=await res.json();if(j.content?.path!==filename||!j.commit?.sha)throw Error("Queue update outcome unknown; reload");
 }
+const approvalEvidenceNames:ReadonlyArray<[keyof Evidence,string]>=[
+ ["original_source","Original first-party source has not been confirmed"],
+ ["timestamp","Original publication timestamp has not been checked"],
+ ["visual_or_data","Original chart or quantitative data has not been inspected"],
+ ["methodology","Data methodology and interpretation limits have not been checked"],
+ ["rights","Rights, permitted sharing and attribution have not been reviewed"],
+ ["uk_review","UK financial-promotion and compliance review remains incomplete"]
+];
+export function approvalBlockers(item:QueueItem,sources:SourceState,now=new Date()):string[]{
+ const reasons:string[]=[];
+ if(item.status!=="candidate")return ["Only candidates can be marked review-approved"];
+ if(item.score<80)reasons.push("Editorial quality score must be at least 80/100");
+ for(const [field,label] of approvalEvidenceNames){if(!item.evidence[field])reasons.push(label)}
+ if(!dateOK(item.published_at_utc))reasons.push("Exact original publication time in UTC is required (YYYY-MM-DD alone is insufficient)");
+ else{
+  const age=now.getTime()-Date.parse(item.published_at_utc);
+  if(age< -300000)reasons.push("Original publication timestamp is in the future");
+  else if(age>336*3600000)reasons.push("Original research is older than the 14-day approval window");
+ }
+ const identity=sourceIdentity(item.url);
+ if(!identity.handle||!sources.accounts.some(a=>a.handle.toLowerCase()===identity.handle!.toLowerCase()))reasons.push("Original research provider must be an approved account in the source registry");
+ return reasons;
+}
 export function updateQueue(current:QueueState,input:QueueInput,sources:SourceState,historicUrls:readonly string[],now=new Date()):QueueState{
  if(input.confirm!=="yes"||!textOK(input.reason,8,200))throw Error("Confirm with an editorial reason");
  const n=structuredClone(current);const action=input.action,at=now.toISOString();
@@ -128,11 +151,8 @@ export function updateQueue(current:QueueState,input:QueueInput,sources:SourceSt
   if(position<0)throw Error("Unknown queue item");
   const item=n.items[position];id=item.id;
   if(action==="approve"){
-   if(item.status!=="candidate")throw Error("Only candidates can be approved");
-   if(item.score<80||!fields.every(f=>item.evidence[f])||!dateOK(item.published_at_utc))throw Error("Evidence, exact UTC timestamp and quality gates incomplete");
-   if(Date.parse(item.published_at_utc)>now.getTime()+300000||now.getTime()-Date.parse(item.published_at_utc)>336*3600*1000)throw Error("Source too old for daily research");
-   const original=sourceIdentity(item.url);
-   if(!original.handle||!sources.accounts.some(s=>s.handle.toLowerCase()===original.handle!.toLowerCase()))throw Error("Source not approved on live roster");
+   const pending=approvalBlockers(item,sources,now);
+   if(pending.length)throw Error("Approval blocked; outstanding verification requirements");
    item.status="approved_for_review";
   }else if(action==="reject"){item.status="rejected";item.vip_highlight=false}
   else if(action==="reopen"){item.status="candidate";item.vip_highlight=false}

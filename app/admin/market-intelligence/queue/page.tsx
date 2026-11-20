@@ -1,7 +1,7 @@
 import type {Metadata} from "next";
 import Link from "next/link";
 import {session,csrf} from "../../../_mi/auth";
-import {readQueue,editionDraft,type QueueItem,type QueueSnapshot,type Evidence} from "../../../_mi/review-queue";
+import {approvalBlockers,readQueue,editionDraft,type QueueItem,type QueueSnapshot,type Evidence} from "../../../_mi/review-queue";
 
 export const dynamic="force-dynamic";
 export const revalidate=0;
@@ -68,7 +68,7 @@ export default async function Page({searchParams}:{searchParams?:{error?:string;
   <header><p className="text-xs uppercase tracking-widest text-amber-300">CryptoMainly · Private editorial workflow · Development</p><h1 className="mt-2 text-3xl font-semibold">Research review queue</h1><p className="mt-2 text-sm text-slate-300">Prepare chart and data-insight research for editorial approval. This feature does not publish to the public site or Telegram.</p><Link href="/admin/market-intelligence" className="mt-3 inline-block text-sm text-sky-300 underline">Back to editorial administration</Link></header>
   <section className={panel}><p>{snap.state.items.length} research candidates · {count} review-approved · {unpublished} VIP highlight nominations</p><p className="mt-2 text-xs text-slate-400">Source roster: {snap.source.accounts.length} approved X accounts. Queue version: {snap.version==="missing"?"Not yet created":snap.version}. {disabled?"Read-only environment":""}</p>
    {searchParams?.saved==="1"&&<p role="status" className="mt-2 text-emerald-300">Private editorial change saved; no content published.</p>}
-   {searchParams?.error&&<p role="alert" className="mt-2 text-rose-300">{searchParams.error==="stale"?"The queue changed. Please inspect the latest version and try again.":searchParams.error==="confirm"?"Confirm the editorial action before submitting.":"Scan import or editorial change was not confirmed. Check original source URLs, UTC dates, schema and the current registry revision."}</p>}
+   {searchParams?.error&&<p role="alert" className="mt-2 text-rose-300">{searchParams.error==="stale"?"The queue changed. Please inspect the latest version and try again.":searchParams.error==="confirm"?"Confirm the editorial action before submitting.":searchParams.error==="approval"?"Review approval blocked: the item has unmet verification requirements. Check the list beside its card, then use Edit details and evidence to record genuine completed checks.":"Change not confirmed. If you were importing a scan, check the JSON, source URLs, timestamps and registry revision; otherwise verify the form and try again."}</p>}
   </section>
   <details className={panel}><summary className="cursor-pointer text-lg font-semibold text-amber-200">Import scanner research (up to 12 candidates)</summary>
    <p className="mt-3 text-sm text-slate-300">Paste a complete JSON research batch supplied by the CryptoMainly Chart Scanner. This is an owner-authenticated import, not an unattended feed. All imported items remain <strong>unapproved candidates</strong>: they cannot publish an edition or send Telegram messages.</p>
@@ -85,16 +85,21 @@ export default async function Page({searchParams}:{searchParams?:{error?:string;
    <form method="post" action="/admin/market-intelligence/queue/action" className="mt-4 space-y-4"><Meta token={token} version={snap.version} op="add"/><fieldset disabled={disabled} className="space-y-4"><Fields/><Reason/><Confirm text="Save as private candidate" disabled={disabled}/></fieldset></form>
   </details>
   <section className="space-y-3"><h2 className="text-xl font-semibold">Research items</h2>{snap.state.items.length===0&&<p className="text-sm text-slate-400">No candidates yet. Nothing has been sent or published.</p>}
-   {[...snap.state.items].sort((a,b)=>b.created_at_utc.localeCompare(a.created_at_utc)).map(i=><article key={i.id} className={panel+" space-y-3"}>
+   {[...snap.state.items].sort((a,b)=>b.created_at_utc.localeCompare(a.created_at_utc)).map(i=>{const pending=i.status==="candidate"?approvalBlockers(i,snap.source):[];return <article key={i.id} className={panel+" space-y-3"}>
     <div><div className="flex flex-wrap gap-3 text-xs text-slate-400"><span>{i.kind==="technical"?"Technical price chart":"Data / on-chain insight"}</span><span>{i.market}</span><span>{i.edition_date}</span><span>{i.score}/100</span><span className={i.status==="approved_for_review"?"text-emerald-300":i.status==="rejected"?"text-rose-300":"text-amber-200"}>{i.status.replaceAll("_"," ")}</span></div><h3 className="mt-2 text-lg font-semibold">{i.title}</h3><p className="mt-1 text-sm text-slate-300">{i.summary}</p><p className="mt-2 text-sm text-slate-300">Why: {i.why_it_matters}</p><p className="mt-1 text-sm text-amber-100">Limitations: {i.limitations}</p><a className="mt-2 inline-block break-all text-sm text-sky-300 underline" href={i.url} target="_blank" rel="noopener noreferrer">Original public research · @{i.source_handle}</a><p className="text-xs text-slate-400">UTC {i.published_at_utc} · Evidence {Object.values(i.evidence).filter(Boolean).length}/6{!i.published_at_utc.includes("T")?" · Exact UTC time pending":""} · {i.vip_highlight?"VIP highlight nominated (not sent)":"No highlight nominated"}</p></div>
+    {pending.length>0&&<section className="rounded-lg border border-amber-500/40 bg-slate-950/60 p-3" aria-label={"Outstanding approval requirements for "+i.title}>
+      <p className="text-sm font-semibold text-amber-200">Not ready for review approval — {pending.length} requirement(s) outstanding</p>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">{pending.map(reason=><li key={reason}>{reason}</li>)}</ul>
+      <p className="mt-2 text-xs text-slate-300">Open “Edit details and evidence” below, verify each outstanding point, tick only genuinely completed checks and save your edits. Approval remains separate from public publication or VIP delivery.</p>
+    </section>}
     <details className="border-t border-slate-700 pt-3"><summary className="cursor-pointer text-amber-200">Edit details and evidence</summary><form method="post" action="/admin/market-intelligence/queue/action" className="mt-3 space-y-4"><Meta token={token} version={snap.version} op="edit" id={i.id}/><fieldset disabled={disabled} className="space-y-4"><Fields item={i}/><Reason defaultValue="Evidence correction or updated editorial analysis"/><Confirm text="Save edits (return to candidate status)" disabled={disabled}/></fieldset></form></details>
     <div className="grid gap-3 sm:grid-cols-2">
-     {i.status==="candidate"&&<Decision item={i} token={token} version={snap.version} op="approve" button="Mark review-approved (NOT publish)" disabled={disabled}/>}
+     {i.status==="candidate"&&<Decision item={i} token={token} version={snap.version} op="approve" button={pending.length>0?"Complete evidence checks before approval":"Mark review-approved (NOT publish)"} disabled={disabled||pending.length>0}/>}
      {i.status!=="rejected"&&<Decision item={i} token={token} version={snap.version} op="reject" button="Reject candidate" disabled={disabled}/>}
      {i.status==="rejected"&&<Decision item={i} token={token} version={snap.version} op="reopen" button="Reopen for review" disabled={disabled}/>}
      {i.status==="approved_for_review"&&<Decision item={i} token={token} version={snap.version} op={i.vip_highlight?"unhighlight":"highlight"} button={i.vip_highlight?"Remove VIP highlight nomination":"Nominate VIP highlight (NOT send)"} disabled={disabled}/>}
     </div>
-   </article>)}
+   </article>})}
   </section>
   <section className={panel}><h2 className="text-lg font-semibold">Audit history</h2><p className="mt-1 text-xs text-slate-400">All operations are internal; no membership data, publication or Telegram actions.</p><ul className="mt-3 space-y-2 text-xs">{[...snap.state.audit].reverse().slice(0,25).map((a,j)=><li className="break-all border-t border-slate-700 pt-2" key={j}>{a.utc} · {a.action} · {a.item_id} · {a.reason}</li>)}</ul></section>
  </div></main>
