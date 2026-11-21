@@ -16,7 +16,10 @@ export function makeWebhookURL(raw:string):URL{
 export function vipConfig():VipConfig{
  const disabled=(reason:string):VipConfig=>({enabled:false,reason,destination:"TEST_ONLY"});
  if(process.env.MI_MAKE_TEST_ENABLED!=="true")return disabled("Make.com TEST-group delivery is not connected yet. Your drafts remain private.");
- if(process.env.VERCEL_ENV!=="production"||process.env.MI_EDITORIAL_MODE!=="production")return disabled("Test-group sending is disabled outside authorised Production mode.");
+ // Isolated localhost acceptance QA may use a *copy* of editorial source/queue files.
+ // This gate cannot be enabled on Vercel and never permits a real VIP destination.
+ const isolatedLocalQa=process.env.MI_MAKE_LOCAL_QA==="true"&&process.env.MI_EDITORIAL_MODE==="local"&&process.env.NODE_ENV==="production"&&!process.env.VERCEL&&!process.env.VERCEL_ENV&&!!process.env.MI_EDITORIAL_TEST_QUEUE_FILE&&!!process.env.MI_EDITORIAL_TEST_FILE;
+ if(!isolatedLocalQa&&(process.env.VERCEL_ENV!=="production"||process.env.MI_EDITORIAL_MODE!=="production"))return disabled("Test-group sending is disabled outside authorised Production mode.");
  if(process.env.MI_MAKE_DESTINATION!=="TEST_ONLY")return disabled("Only the isolated TEST_ONLY destination is permitted.");
  try{makeWebhookURL(process.env.MI_MAKE_WEBHOOK_URL??"")}catch{return disabled("The Make.com webhook endpoint is not configured securely.")}
  const key=process.env.MI_MAKE_WEBHOOK_API_KEY??"";
