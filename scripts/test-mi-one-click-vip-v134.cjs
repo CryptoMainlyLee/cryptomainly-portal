@@ -4,7 +4,7 @@ const root=path.resolve(__dirname,"..");const source=JSON.parse(fs.readFileSync(
 function load(relative,other={},environment={}){
  const target={};
  const js=ts.transpileModule(fs.readFileSync(path.join(root,relative),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(js,{exports:target,require(name){if(name==="server-only")return {};if(name==="node:crypto")return crypto;if(name==="node:fs/promises")return require("node:fs/promises");if(name==="./state")return {};if(other[name])return other[name];throw Error("Unexpected dependency: "+name)},process:{env:environment},Buffer,URL,Date,structuredClone,AbortSignal,Response,console,fetch:async (...args)=>{calls.push(args);return fakeResponse}}, {filename:relative});
+ vm.runInNewContext(js,{exports:target,require(name){if(name==="server-only")return {};if(name==="node:crypto")return crypto;if(name==="node:fs/promises")return require("node:fs/promises");if(name==="./hosted-qa")return {hostedQaIsolated:()=>false,hostedQaStorageBranch:()=>null};if(name==="./state")return {};if(other[name])return other[name];throw Error("Unexpected dependency: "+name)},process:{env:environment},Buffer,URL,Date,structuredClone,AbortSignal,Response,console,fetch:async (...args)=>{calls.push(args);return fakeResponse}}, {filename:relative});
  return target;
 }
 let calls=[],fakeResponse=null,count=0;const ok=(x,m)=>{assert.ok(x,m);count++;console.log("PASS",m)},fails=(fn,m)=>{assert.throws(fn);count++;console.log("PASS",m)};

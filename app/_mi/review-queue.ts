@@ -2,6 +2,7 @@ import "server-only";
 import {createHash,randomUUID} from "node:crypto";
 import {readFile,writeFile,rename,unlink,open} from "node:fs/promises";
 import {readState,type State as SourceState} from "./state";
+import {hostedQaStorageBranch} from "./hosted-qa";
 
 export type Kind="technical"|"data";
 export type Market="crypto"|"stocks"|"macro";
@@ -87,7 +88,7 @@ function mode(){
  if(m==="local"&&(!process.env.MI_EDITORIAL_TEST_QUEUE_FILE||!process.env.MI_EDITORIAL_TEST_FILE||process.env.VERCEL||process.env.NODE_ENV!=="production"))throw Error("Local test files not explicitly isolated");
  return m;
 }
-function credentials(m:string){const token=process.env.MI_EDITORIAL_GITHUB_TOKEN;if(!token)throw Error("Queue storage unavailable");return {token,repo:m==="preview"?"CryptoMainlyLee/cryptomainly-editorial-sandbox":"CryptoMainlyLee/cryptomainly-editorial-registry"}}
+function credentials(m:string){const token=process.env.MI_EDITORIAL_GITHUB_TOKEN;if(!token)throw Error("Queue storage unavailable");return {token,repo:m==="preview"?"CryptoMainlyLee/cryptomainly-editorial-sandbox":"CryptoMainlyLee/cryptomainly-editorial-registry",branch:m==="preview"?(hostedQaStorageBranch()??"main"):"main"}}
 function headers(token:string){return {Authorization:"Bearer "+token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}}
 export async function readQueue():Promise<QueueSnapshot>{
  const m=mode();const source=(await readState()).state;
@@ -98,8 +99,8 @@ export async function readQueue():Promise<QueueSnapshot>{
   if(Buffer.byteLength(raw)>131072)throw Error("Queue oversized");
   return {state:validateQueue(JSON.parse(raw)),version:hash(raw),writable:true,source};
  }
- const {token,repo}=credentials(m);
- const r=await fetch("https://api.github.com/repos/"+repo+"/contents/"+filename+"?ref=main",{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000),headers:headers(token)});
+ const {token,repo,branch}=credentials(m);
+ const r=await fetch("https://api.github.com/repos/"+repo+"/contents/"+filename+"?ref="+encodeURIComponent(branch),{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000),headers:headers(token)});
  if(r.status===404)return {state:emptyQueue(),version:"missing",writable:true,source}; // readState already proved access to this same private repo
  if(!r.ok)throw Error("Private queue unavailable");
  const j=await r.json();
@@ -116,8 +117,8 @@ export async function writeQueue(expected:string,next:QueueState){
   try{await writeFile(p+".tmp",body,{flag:"wx"});await rename(p+".tmp",p)}finally{await file.close();await unlink(lock).catch(()=>{})}
   return;
  }
- const {token,repo}=credentials(m);
- const payload:any={branch:"main",message:"chore(editorial): reviewed research queue update",content:Buffer.from(body).toString("base64")};
+ const {token,repo,branch}=credentials(m);
+ const payload:any={branch,message:"chore(editorial): reviewed research queue update",content:Buffer.from(body).toString("base64")};
  if(expected!=="missing"){if(!/^[a-f0-9]{40}$/.test(expected))throw Error("Invalid queue file version");payload.sha=expected}
  const res=await fetch("https://api.github.com/repos/"+repo+"/contents/"+filename,{method:"PUT",cache:"no-store",redirect:"error",signal:AbortSignal.timeout(12000),headers:{...headers(token),"Content-Type":"application/json"},body:JSON.stringify(payload)});
  if(!res.ok)throw Error("Private queue change not confirmed; reload");

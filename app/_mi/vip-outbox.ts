@@ -2,6 +2,7 @@ import "server-only";
 import {randomUUID} from "node:crypto";
 import {sourceIdentity,updateQueue,queueRevision,validateQueue,type QueueState,type QueueItem,type QueueInput,type VipDelivery} from "./review-queue";
 import type {State as SourceState} from "./state";
+import {hostedQaIsolated} from "./hosted-qa";
 
 // Dedicated Make.com delivery transport. Never use membership credentials or post directly to Telegram.
 const TEST_CHAT_ID="-1004432697280";
@@ -19,7 +20,9 @@ export function vipConfig():VipConfig{
  // Isolated localhost acceptance QA may use a *copy* of editorial source/queue files.
  // This gate cannot be enabled on Vercel and never permits a real VIP destination.
  const isolatedLocalQa=process.env.MI_MAKE_LOCAL_QA==="true"&&process.env.MI_EDITORIAL_MODE==="local"&&process.env.NODE_ENV==="production"&&!process.env.VERCEL&&!process.env.VERCEL_ENV&&!!process.env.MI_EDITORIAL_TEST_QUEUE_FILE&&!!process.env.MI_EDITORIAL_TEST_FILE;
- if(!isolatedLocalQa&&(process.env.VERCEL_ENV!=="production"||process.env.MI_EDITORIAL_MODE!=="production"))return disabled("Test-group sending is disabled outside authorised Production mode.");
+ const hostedQa=hostedQaIsolated();
+ if(process.env.MI_MAKE_HOSTED_QA==="true"&&!hostedQa)return disabled("Hosted TEST sending is forbidden outside its private Vercel Preview and sandbox storage branch.");
+ if(!isolatedLocalQa&&!hostedQa&&(process.env.VERCEL_ENV!=="production"||process.env.MI_EDITORIAL_MODE!=="production"))return disabled("Test-group sending is disabled outside authorised Production mode.");
  if(process.env.MI_MAKE_DESTINATION!=="TEST_ONLY")return disabled("Only the isolated TEST_ONLY destination is permitted.");
  try{makeWebhookURL(process.env.MI_MAKE_WEBHOOK_URL??"")}catch{return disabled("The Make.com webhook endpoint is not configured securely.")}
  const key=process.env.MI_MAKE_WEBHOOK_API_KEY??"";

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile, rename, unlink, open } from "node:fs/promises";
 import seed from "./seed-registry.json";
 import baseline from "../vip/market-intelligence/visibility.json";
+import {hostedQaStorageBranch} from "./hosted-qa";
 
 export const days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
 export type Day = typeof days[number];
@@ -40,7 +41,7 @@ export function validate(v:any):State{
  if(v.source_count!==accounts.length||state.revision_sha256!==revision(state))throw Error("Registry revision mismatch");return state;
 }
 function mode(){const m=process.env.MI_EDITORIAL_MODE??"off";if(process.env.VERCEL_ENV==="production"&&m!=="production")throw Error("Production editorial storage must be explicitly configured");if(!["off","local","preview","production"].includes(m))throw Error("Unknown editorial mode");if(m==="local"&&(!process.env.MI_EDITORIAL_TEST_FILE||process.env.VERCEL||process.env.NODE_ENV!=="production"))throw Error("Local test mode requires isolated production-style localhost");if(m==="preview"&&process.env.VERCEL_ENV!=="preview")throw Error("Preview backend isolation failure");if(m==="production"&&process.env.VERCEL_ENV!=="production")throw Error("Production backend isolation failure");return m}
-function github(m:string){const token=process.env.MI_EDITORIAL_GITHUB_TOKEN;if(!token)throw Error("Editorial storage unavailable");return {token,repo:m==="preview"?previewRepo:productionRepo,branch:"main"}}
+function github(m:string){const token=process.env.MI_EDITORIAL_GITHUB_TOKEN;if(!token)throw Error("Editorial storage unavailable");return {token,repo:m==="preview"?previewRepo:productionRepo,branch:m==="preview"?(hostedQaStorageBranch()??"main"):"main"}}
 async function ghRead(m:string):Promise<Snapshot>{
  const {token,repo,branch}=github(m);const r=await fetch("https://api.github.com/repos/"+repo+"/contents/"+file+"?ref="+branch,{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000),headers:{Authorization:"Bearer "+token,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}});if(!r.ok)throw Error("Editorial registry unavailable");
  const j=await r.json();if(j.type!=="file"||j.path!==file||! /^[a-f0-9]{40}$/.test(j.sha)||j.size>131072||j.encoding!=="base64"||typeof j.content!=="string")throw Error("Invalid hosted registry response");
