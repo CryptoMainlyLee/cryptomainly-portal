@@ -71,12 +71,12 @@ function CandidateCard({item,token,version,writable,connected,connectionReason}:
     </label>
     <div className="flex flex-wrap items-center gap-3">
      <button className={button} disabled={!writable||item.status==="rejected"} type="submit">Save edits</button>
-     <button type="submit" formAction="/admin/market-intelligence/queue/send" disabled={locked||!connected} className="rounded-lg bg-emerald-500 px-6 py-3 font-bold text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">{sent?"Already sent to VIP":pending?"Check delivery before resending":"Send to VIP"}</button>
+     <button type="submit" formAction="/admin/market-intelligence/queue/send" disabled={locked||!connected} className="rounded-lg bg-emerald-500 px-6 py-3 font-bold text-slate-950 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">{sent?"Already sent to TEST Group":pending?"Check delivery before resending":"Send to TEST Group"}</button>
     </div>
     {!connected&&!sent&&<p className="text-sm text-amber-300">{connectionReason} Sending cannot be enabled by ticking the box alone.</p>}
     {sent&&<p className="text-sm text-emerald-300">Telegram confirmed message #{item.vip_delivery?.telegram_message_id}. Editing this record will not modify or resend that Telegram message.</p>}
     {pending&&<p className="text-sm text-amber-300">The outbound attempt was reserved. Do not retry until its Telegram outcome is reconciled.</p>}
-    <p className="text-xs text-slate-400">This sends one individual highlight to VIP. It does not automatically publish a dated Market Intelligence website edition.</p>
+    <p className="text-xs text-slate-400">This sends one individual highlight to the private TEST group only. It does not automatically publish a dated Market Intelligence website edition.</p>
    </form>
   </details>
   {item.status==="rejected"&&<p className="text-sm text-rose-300">Rejected research cannot be sent. Reopen it in the legacy editorial controls if needed.</p>}
@@ -90,7 +90,7 @@ export default async function Page({searchParams}:{searchParams?:{error?:string;
  return <main className="min-h-screen bg-[#07111f] px-4 py-10 text-slate-100"><div className="mx-auto max-w-6xl space-y-6">
   <header className="space-y-2"><p className="text-xs uppercase tracking-widest text-sky-300">CryptoMainly · Private editorial administrator</p><h1 className="text-3xl font-bold">Market Intelligence · VIP highlights</h1><p className="text-slate-300">Read the research and original chart, adjust any wording, confirm and send the individual highlight to VIP in one action.</p><Link href="/admin/market-intelligence" className="text-sm text-sky-300 underline">Back to administrator</Link></header>
   <section className={panel}><div className="flex flex-wrap gap-4 text-base"><span><strong>{snap.state.items.length}</strong> research items</span><span><strong>{sent}</strong> sent to VIP</span><span><strong>{snap.source.accounts.length}</strong> approved X sources</span></div><p className={"mt-3 text-sm "+(vip.enabled?"text-emerald-300":"text-amber-200")}>{vip.enabled?"VIP sending is configured. Each confirmed click delivers one message.":vip.reason}</p></section>
-  {searchParams?.vip==="sent"&&<p role="status" className="rounded-lg border border-emerald-700 p-4 text-emerald-300">Telegram confirmed delivery of your VIP highlight. The post is recorded as sent.</p>}
+  {searchParams?.vip==="sent"&&<p role="status" className="rounded-lg border border-emerald-700 p-4 text-emerald-300">Telegram confirmed delivery to the private test group. The post is recorded as sent.</p>}
   {searchParams?.saved==="1"&&<p role="status" className="rounded-lg border border-sky-700 p-4 text-sky-300">Draft saved. No message sent.</p>}
   {searchParams?.error&&<p role="alert" className="rounded-lg border border-rose-700 p-4 text-rose-300">{searchParams.error==="vip_unknown"?"Telegram delivery outcome is uncertain. Check the VIP chat before taking any action; automatic retry is blocked.":searchParams.error==="vip_disabled"?"VIP sending is not configured. Your draft remains private.":searchParams.error==="stale"?"This draft has been updated since the page loaded. Refresh and review it before sending.":searchParams.error==="confirm"?"Confirm the post before sending it.":"The editorial change could not be saved. Check the required fields and source URL; nothing was sent."}</p>}
   <details className={panel}><summary className="cursor-pointer font-semibold text-lg text-sky-300">Add a new research candidate</summary>

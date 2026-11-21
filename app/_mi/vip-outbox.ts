@@ -3,14 +3,25 @@ import {randomUUID} from "node:crypto";
 import {sourceIdentity,updateQueue,queueRevision,validateQueue,type QueueState,type QueueItem,type QueueInput,type VipDelivery} from "./review-queue";
 import type {State as SourceState} from "./state";
 
-const BOT_URL="https://api.telegram.org/";
-export type VipConfig={enabled:boolean;reason:string};
+// Dedicated Make.com delivery transport. Never use membership credentials or post directly to Telegram.
+const TEST_CHAT_ID="-1004432697280";
+const MAKE_SCHEMA="cryptomainly-vip-delivery-v1";
+const RECEIPT_SCHEMA="cryptomainly-make-delivery-receipt-v1";
+export type VipConfig={enabled:boolean;reason:string;destination:"TEST_ONLY"};
+export function makeWebhookURL(raw:string):URL{
+ let url:URL;try{url=new URL(raw)}catch{throw Error("Make webhook URL not configured")}
+ if(url.protocol!=="https:"||url.hostname!=="hook.eu2.make.com"||url.username||url.password||url.port||url.search||url.hash||!/^\/[A-Za-z0-9_-]{20,128}$/.test(url.pathname))throw Error("Only the pinned EU2 Make webhook endpoint is permitted");
+ return url;
+}
 export function vipConfig():VipConfig{
- const explicit=process.env.MI_VIP_SEND_ENABLED==="true";
- if(!explicit)return {enabled:false,reason:"VIP sending is not connected yet. Your drafts remain private."};
- if(process.env.VERCEL_ENV!=="production"||process.env.MI_EDITORIAL_MODE!=="production")return {enabled:false,reason:"Sending is disabled outside the authorised Production environment."};
- if(!/^\d{5,12}:[A-Za-z0-9_-]{30,}$/.test(process.env.MI_VIP_BOT_TOKEN??"")||!/^\-100\d{6,15}$/.test(process.env.MI_VIP_CHAT_ID??""))return {enabled:false,reason:"VIP bot credentials or destination are not configured."};
- return {enabled:true,reason:"VIP bot connection configured. A confirmed click sends to the VIP group."};
+ const disabled=(reason:string):VipConfig=>({enabled:false,reason,destination:"TEST_ONLY"});
+ if(process.env.MI_MAKE_TEST_ENABLED!=="true")return disabled("Make.com TEST-group delivery is not connected yet. Your drafts remain private.");
+ if(process.env.VERCEL_ENV!=="production"||process.env.MI_EDITORIAL_MODE!=="production")return disabled("Test-group sending is disabled outside authorised Production mode.");
+ if(process.env.MI_MAKE_DESTINATION!=="TEST_ONLY")return disabled("Only the isolated TEST_ONLY destination is permitted.");
+ try{makeWebhookURL(process.env.MI_MAKE_WEBHOOK_URL??"")}catch{return disabled("The Make.com webhook endpoint is not configured securely.")}
+ const key=process.env.MI_MAKE_WEBHOOK_API_KEY??"";
+ if(key.length<20||key.length>256||! /^[A-Za-z0-9_-]+$/.test(key))return disabled("The Make.com webhook authentication key is unavailable.");
+ return {enabled:true,destination:"TEST_ONLY",reason:"Make.com TEST-group destination configured. This cannot send to the actual VIP group."};
 }
 export function composeVipText(item:QueueItem):string{
  const body=item.vip_post_text?.trim()||["📈 CryptoMainly VIP · Market Intelligence",item.title,item.summary,"Why it matters: "+item.why_it_matters,"Limitations: "+item.limitations].join("\n\n");
@@ -54,18 +65,36 @@ export function recordVipSend(state:QueueState,itemId:string,requestId:string,re
  next.revision_sha256=queueRevision(next.items);
  return validateQueue(next);
 }
-export async function sendTelegramVip(item:QueueItem,message:string):Promise<{messageId:number}>{
- const config=vipConfig();
- if(!config.enabled)throw Error("VIP delivery is not authorised");
- const token=process.env.MI_VIP_BOT_TOKEN!;
- const chat=process.env.MI_VIP_CHAT_ID!;
- const hasPhoto=!!item.vip_image_url;
- const method=hasPhoto?"sendPhoto":"sendMessage";
- const payload=hasPhoto?{chat_id:chat,photo:item.vip_image_url,caption:message,protect_content:true,allow_paid_broadcast:false}:{chat_id:chat,text:message,link_preview_options:{url:item.url,prefer_large_media:true},protect_content:true,allow_paid_broadcast:false};
+export async function sendMakeTest(item:QueueItem,message:string,requestId:string):Promise<{messageId:number}>{
+ if(!vipConfig().enabled)throw Error("Make test delivery is not authorised");
+ if(!/^[0-9a-f-]{36}$/.test(requestId))throw Error("Invalid delivery reservation ID");
+ // Pinned Test-only destination. Never accept a Telegram ID from the browser, research scan or submitted JSON.
+ const destination="TEST_ONLY";
+ const payload={
+  schema:MAKE_SCHEMA,
+  edition_id:"HIGHLIGHT_"+requestId,
+  delivery_id:requestId,
+  content_type:"vip_highlight",
+  destination,
+  approved:true,
+  summary:message,
+  edition_url:sourceIdentity(item.url).url,
+  image_url:item.vip_image_url??"",
+  published_date:new Date().toISOString().slice(0,10),
+  chart_count:item.kind==="technical"?1:0
+ };
+ const url=makeWebhookURL(process.env.MI_MAKE_WEBHOOK_URL??"");
+ const key=process.env.MI_MAKE_WEBHOOK_API_KEY!;
  let response:Response;
- try{response=await fetch(BOT_URL+"bot"+token+"/"+method,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),cache:"no-store",redirect:"error",signal:AbortSignal.timeout(10000)})}catch{throw Error("Telegram outcome uncertain")}
- let body:any;
- try{body=await response.json()}catch{throw Error("Telegram response uncertain")}
- if(!response.ok||body?.ok!==true||!Number.isSafeInteger(body?.result?.message_id)||String(body.result?.chat?.id)!==chat)throw Error("Telegram delivery not positively acknowledged");
- return {messageId:body.result.message_id};
+ try{
+  response=await fetch(url.href,{method:"POST",headers:{"Content-Type":"application/json","x-make-apikey":key},body:JSON.stringify(payload),cache:"no-store",redirect:"error",signal:AbortSignal.timeout(25000)});
+ }catch{throw Error("Make webhook delivery outcome is uncertain; do not retry automatically")}
+ // Make's default HTTP 200 'Accepted' only means queued, NOT successfully sent to Telegram.
+ // A custom Webhook Response module must be LAST in the scenario and return the verified
+ // Telegram module message ID, destination and original delivery_id as JSON.
+ if(!response.ok||!response.headers.get("content-type")?.toLowerCase().includes("application/json"))throw Error("No verified Make Telegram delivery receipt; do not retry automatically");
+ let ack:any;
+ try{ack=await response.json()}catch{throw Error("Invalid Make delivery receipt")}
+ if(ack?.schema!==RECEIPT_SCHEMA||ack.status!=="sent"||ack.delivery_id!==requestId||ack.destination!==destination||String(ack.chat_id)!==TEST_CHAT_ID||!Number.isSafeInteger(ack.message_id)||ack.message_id<=0)throw Error("Make did not provide an exact TEST-group Telegram delivery confirmation");
+ return {messageId:ack.message_id};
 }

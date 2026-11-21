@@ -37,7 +37,7 @@ const input={
  ok((await (await get(p,{Cookie:cookie})).text()).includes("Household pressure reaches"),"Private queue renders new research");
  const incompleteHtml=await (await get(p,{Cookie:cookie})).text();
  ok(!incompleteHtml.includes("Not ready for review approval")&&incompleteHtml.includes("Edit post and prepare VIP message"),"New VIP editor shows research without a six-check evidence barrier");
- ok(incompleteHtml.includes("Send to VIP"),"One-click VIP send wording is present on research card");
+ ok(incompleteHtml.includes("Send to TEST Group"),"One-click VIP send wording is present on research card");
  const unauthPreview=await get(p+"/preview/2026-11-20");ok(!(await unauthPreview.text()).includes("Household pressure reaches"),"Anonymous edition preview hides draft data");
  const stale=await post(p+"/action",{action:"reject",id,version:"missing",csrf:blank.csrf,reason:"Review and reject",confirm:"yes"},{Cookie:cookie});ok(stale.headers.get("location").endsWith("?error=stale"),"Stale queue version rejected");
  const dup=await change("add",input);ok(dup.headers.get("location").endsWith("?error=save"),"Same original post cannot be added twice");
@@ -46,7 +46,7 @@ const input={
  const complete={...input,id,evidence:["original_source","timestamp","visual_or_data","methodology","rights","uk_review"]};
  saved(await change("edit",complete),"Editorial evidence checklist saved");
  const completeHtml=await (await get(p,{Cookie:cookie})).text();
- ok(completeHtml.includes("Send to VIP"),"No extra approval UI appears after saving research evidence");
+ ok(completeHtml.includes("Send to TEST Group"),"No extra approval UI appears after saving research evidence");
  saved(await change("approve",{id}),"Fully reviewed candidate marked review-approved");
  let approved=JSON.parse(fs.readFileSync(queueFile,"utf8"));eq(approved.items[0].status,"approved_for_review","Review-approved state persisted");
  ok((await (await get(p+"/preview/2026-11-20",{Cookie:cookie})).text()).includes("Household pressure reaches"),"Protected preview shows approved item");

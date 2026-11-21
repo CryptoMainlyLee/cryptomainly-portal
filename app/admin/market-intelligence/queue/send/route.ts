@@ -1,6 +1,6 @@
 import {csrfOK,form,session,trustedOrigin} from "../../../../_mi/auth";
 import {readQueue,writeQueue} from "../../../../_mi/review-queue";
-import {vipConfig,reserveVipSend,recordVipSend,sendTelegramVip} from "../../../../_mi/vip-outbox";
+import {vipConfig,reserveVipSend,recordVipSend,sendMakeTest} from "../../../../_mi/vip-outbox";
 import {EDITORIAL_SOURCE_EDITIONS} from "../../../../vip/market-intelligence/editions";
 export const dynamic="force-dynamic";
 const page="/admin/market-intelligence/queue";
@@ -34,7 +34,7 @@ export async function POST(req:Request){
   await writeQueue(snap.version,draft.state);
   reserved=true;
   let result:{ok:boolean;messageId?:number}={ok:false};
-  try{const ack=await sendTelegramVip(draft.item,draft.message);result={ok:true,messageId:ack.messageId}}catch{/* Never retry an uncertain Telegram POST automatically. */}
+  try{const ack=await sendMakeTest(draft.item,draft.message,draft.requestId);result={ok:true,messageId:ack.messageId}}catch{/* Never retry an uncertain Telegram POST automatically. */}
   for(let attempt=0;attempt<3;attempt++){
    try{
     const state=await readQueue();

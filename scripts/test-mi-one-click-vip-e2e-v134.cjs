@@ -28,7 +28,7 @@ const find=(html,key)=>{const a=html.match(new RegExp('name="'+key+'" value="([^
  ok(html.includes("platform.twitter.com/embed/Tweet.html?id="),"Original X chart embed present");
  ok(html.includes("research.glassnode.com"),"Glassnode official research linked");
  ok(html.includes("cryptoquant.com"),"CryptoQuant official research linked");
- ok(html.includes("Send to VIP"),"Single VIP action displayed");
+ ok(html.includes("Send to TEST Group"),"One-click test group action displayed");
  ok(html.includes("I have reviewed this post, its original source"),"One compact owner confirmation present");
  ok(!html.includes("Complete evidence checks before approval")&&!html.includes("Not ready for review approval"),"Six-evidence obstruction removed from UI");
  ok(html.includes("not connected yet"),"Unconfigured destination explained without false send status");
