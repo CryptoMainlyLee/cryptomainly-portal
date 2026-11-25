@@ -24,6 +24,11 @@ if(E.MI_MAKE_HOSTED_QA!=="true"||E.VERCEL_ENV!=="preview"){
  }
  if(!facts.tokenPresent){console.log("MI_V135_HOSTED_GITHUB_READ",{status:"token_absent"});return;}
  try{
+  const baseHeaders={Authorization:"Bearer "+E.MI_EDITORIAL_GITHUB_TOKEN,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"};
+  const paths=[["identity","/user"],["sandboxRepo","/repos/CryptoMainlyLee/cryptomainly-editorial-sandbox"],["sandboxMainFile","/repos/CryptoMainlyLee/cryptomainly-editorial-sandbox/contents/source-registry.json?ref=main"]];
+  const access={};
+  for(const [name,path] of paths){try{const r=await fetch("https://api.github.com"+path,{redirect:"error",signal:AbortSignal.timeout(6500),headers:baseHeaders});access[name]=r.status;}catch(e){access[name]=e?.name==="TimeoutError"?"timeout":"transport_error";}}
+  console.log("MI_V135_HOSTED_GITHUB_SCOPE",JSON.stringify(access));
   const url="https://api.github.com/repos/CryptoMainlyLee/cryptomainly-editorial-sandbox/contents/source-registry.json?ref="+encodeURIComponent(expectedSandboxBranch);
   const response=await fetch(url,{redirect:"error",signal:AbortSignal.timeout(8000),headers:{Authorization:"Bearer "+E.MI_EDITORIAL_GITHUB_TOKEN,Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}});
   let valid=false,shaFormat=false,sourceCount=null;
