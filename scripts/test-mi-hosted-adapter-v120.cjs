@@ -6,7 +6,7 @@ const env={VERCEL_ENV:"preview",MI_EDITORIAL_MODE:"preview",MI_EDITORIAL_GITHUB_
 const calls=[];let response,fail=false;const sha="a".repeat(40),next="b".repeat(40);
 const body=JSON.stringify(state);const valid={type:"file",path:"source-registry.json",encoding:"base64",size:Buffer.byteLength(body),sha,content:Buffer.from(body).toString("base64")};
 const m={exports:{}};const compiled=ts.transpileModule(fs.readFileSync(p,"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
-vm.runInNewContext(compiled,{module:m,exports:m.exports,require:k=>k==="server-only"?{}:k==="./seed-registry.json"?seed:k==="../vip/market-intelligence/visibility.json"?base:require(k),process:{env},Buffer,AbortSignal,structuredClone,fetch:async(url,opts)=>{calls.push({url,opts});if(fail)throw Error("simulated network failure");return response},console});
+vm.runInNewContext(compiled,{module:m,exports:m.exports,require:k=>k==="server-only"?{}:k==="./seed-registry.json"?seed:k==="../vip/market-intelligence/visibility.json"?base:k==="./hosted-qa"?{hostedQaStorageBranch:()=>null}:require(k),process:{env},Buffer,AbortSignal,structuredClone,fetch:async(url,opts)=>{calls.push({url,opts});if(fail)throw Error("simulated network failure");return response},console});
 const api=m.exports;let checks=0;const ok=(label,v)=>{assert.ok(v,label);checks++;console.log("PASS",label)};const reject=async(label,f)=>{await assert.rejects(f);checks++;console.log("PASS",label)};
 const set=(json,status=200)=>{response={ok:status>=200&&status<300,status,json:async()=>json}};
 (async()=>{

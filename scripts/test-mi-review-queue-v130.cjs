@@ -7,7 +7,7 @@ const env={MI_EDITORIAL_MODE:"local",MI_EDITORIAL_TEST_FILE:path.join(temp,"sour
 let requests=0;
 const targetExports={};
 const js=ts.transpileModule(fs.readFileSync(path.join(base,"app/_mi/review-queue.ts"),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-vm.runInNewContext(js,{exports:targetExports,require(name){if(name==="server-only")return {};if(name==="node:crypto")return crypto;if(name==="node:fs/promises")return require("node:fs/promises");if(name==="./state")return {readState:async()=>({state:source,version:"synthetic",writable:true})};throw Error("Unexpected import "+name)},process:{env},Buffer,URL,AbortSignal,Date,structuredClone,fetch(){requests++;throw Error("Network should never be used")},console});
+vm.runInNewContext(js,{exports:targetExports,require(name){if(name==="server-only")return {};if(name==="node:crypto")return crypto;if(name==="node:fs/promises")return require("node:fs/promises");if(name==="./state")return {readState:async()=>({state:source,version:"synthetic",writable:true})};if(name==="./hosted-qa")return {hostedQaStorageBranch:()=>null};throw Error("Unexpected import "+name)},process:{env},Buffer,URL,AbortSignal,Date,structuredClone,fetch(){requests++;throw Error("Network should never be used")},console});
 let passed=0;
 function ok(x,name){assert.ok(x,name);passed++;console.log("PASS",name)}
 function fails(fn,name){assert.throws(fn);passed++;console.log("PASS",name)}

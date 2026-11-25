@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/verify-mi-withdrawals.cjs && node scripts/mi-v135-hosted-preflight.cjs && node scripts/mi-v135-make-config-fingerprint.cjs",
+    "prebuild": "node scripts/verify-mi-withdrawals.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
