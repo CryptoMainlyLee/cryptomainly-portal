@@ -3,7 +3,7 @@ import { hasAdminSession } from "../_lib/auth";
 import { loginAction } from "../actions";
 
 type Props = {
-  searchParams?: { error?: string };
+  searchParams?: Promise<{ error?: string }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,8 @@ export default async function VipAdminLogin({ searchParams }: Props) {
     redirect("/admin/vip");
   }
 
-  const failed = searchParams?.error === "1";
+  const query = await searchParams;
+  const failed = query?.error === "1";
 
   return (
     <main className="min-h-screen bg-[#07111f] px-4 py-12 text-slate-100">

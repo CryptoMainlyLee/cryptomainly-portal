@@ -15,10 +15,10 @@ function equal(a:string,b:string){return timingSafeEqual(createHash("sha256").up
 export function matches(input:string){const key=secret();return !!key&&input.length<=256&&equal(input,key)}
 export function issue(){const body=String(Math.floor(Date.now()/1000)+3600)+"."+randomBytes(24).toString("hex");return body+"."+mac("session:"+body)}
 export function verify(token:string){if(!secret()||!/^\d{10}\.[a-f0-9]{48}\.[a-f0-9]{64}$/.test(token))return false;const [expiry,nonce,sig]=token.split(".");const now=Math.floor(Date.now()/1000);return Number(expiry)>now&&Number(expiry)<=now+3600&&equal(sig,mac("session:"+expiry+"."+nonce))}
-export async function session(){const token=cookies().get(name)?.value??"";return verify(token)?token:null}
+export async function session(){const token=(await cookies()).get(name)?.value??"";return verify(token)?token:null}
 export function csrf(token:string){return mac("csrf:"+token)}
 export function csrfOK(token:string,input:string){return input.length===64&&equal(input,csrf(token))}
-export function setSession(value:string,maxAge=3600){cookies().set(name,value,{httpOnly:true,secure:process.env.VERCEL==="1"||process.env.MI_EDITORIAL_MODE!=="local",sameSite:"strict",path:editorPath,maxAge})}
+export async function setSession(value:string,maxAge=3600){(await cookies()).set(name,value,{httpOnly:true,secure:process.env.VERCEL==="1"||process.env.MI_EDITORIAL_MODE!=="local",sameSite:"strict",path:editorPath,maxAge})}
 function deploymentOrigin(){
  const h=process.env.VERCEL_URL??"";
  if(!h.endsWith(".vercel.app")||!/^[a-z0-9-]+$/.test(h.slice(0,-11)))throw Error("Unknown Vercel deployment origin");

@@ -10,6 +10,7 @@ function load(relative,extra){
   if(n==="node:crypto")return crypto;
   if(n==="node:fs/promises")return require("node:fs/promises");
   if(n==="./state")return {};
+  if(n==="./hosted-qa")return {hostedQaStorageBranch:()=>null};
   if(extra&&extra[n])return extra[n];
   throw Error("Unexpected import "+n);
  };

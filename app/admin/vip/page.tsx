@@ -5,13 +5,13 @@ import { getMembers, type MemberOverview } from "./_lib/data";
 import { logoutAction } from "./actions";
 
 type Props = {
-  searchParams?: {
+  searchParams?: Promise<{
     status?: string;
     type?: string;
     review?: string;
     blocked?: string;
     q?: string;
-  };
+  }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -49,7 +49,7 @@ function typeLabel(type: MemberOverview["entitlement_type"]) {
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
-function filterMembers(members: MemberOverview[], params: Props["searchParams"]) {
+function filterMembers(members: MemberOverview[], params: Awaited<Props["searchParams"]>) {
   const status = params?.status?.toUpperCase();
   const type = params?.type?.toLowerCase();
   const review = params?.review;
@@ -83,8 +83,9 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
     redirect("/admin/vip/login");
   }
 
+  const query = await searchParams;
   const members = await getMembers();
-  const filtered = filterMembers(members, searchParams);
+  const filtered = filterMembers(members, query);
 
   const active = members.filter((m) => m.status === "ACTIVE").length;
   const former = members.filter((m) => m.status === "FORMER").length;
@@ -151,17 +152,17 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
         <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60">
           <div className="border-b border-slate-800 p-4">
             <form className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
-              {searchParams?.blocked === "1" ? <input type="hidden" name="blocked" value="1" /> : null}
+              {query?.blocked === "1" ? <input type="hidden" name="blocked" value="1" /> : null}
               <input
                 name="q"
-                defaultValue={searchParams?.q}
+                defaultValue={query?.q}
                 placeholder="Search member, Telegram, email…"
                 className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-amber-400"
               />
 
               <select
                 name="status"
-                defaultValue={searchParams?.status ?? "ALL"}
+                defaultValue={query?.status ?? "ALL"}
                 className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm"
               >
                 <option value="ALL">All statuses</option>
@@ -172,7 +173,7 @@ export default async function VipAdminDashboard({ searchParams }: Props) {
 
               <select
                 name="type"
-                defaultValue={searchParams?.type ?? "all"}
+                defaultValue={query?.type ?? "all"}
                 className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm"
               >
                 <option value="all">All types</option>

@@ -15,12 +15,13 @@ type SearchParams = { q?: string | string[]; market?: string | string[]; date?: 
 function param(v: string | string[] | undefined) {
   return typeof v === "string" ? v.trim().slice(0,160) : "";
 }
-export default async function ResearchArchiveIndex({ searchParams }: {searchParams?: SearchParams}) {
+export default async function ResearchArchiveIndex({ searchParams }: {searchParams?: Promise<SearchParams>}) {
+  const query = await searchParams;
   const allEditions = await publicEditions();
   const LATEST_RESEARCH_EDITION = allEditions[0];
-  const q = param(searchParams?.q);
-  const market = param(searchParams?.market);
-  const date = param(searchParams?.date);
+  const q = param(query?.q);
+  const market = param(query?.market);
+  const date = param(query?.date);
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const filtered = allEditions.filter(e => !date || e.slug === date).map(edition => {
     const observations = edition.observations.filter(item => {

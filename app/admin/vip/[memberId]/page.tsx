@@ -22,12 +22,12 @@ import PaymentEditor from "./PaymentEditor";
 import ReviewCasesPanel from "./ReviewCasesPanel";
 
 type Props = {
-  params: { memberId: string };
-  searchParams?: {
+  params: Promise<{ memberId: string }>;
+  searchParams?: Promise<{
     note?: string;
     action?: string;
     actionError?: string;
-  };
+  }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -164,15 +164,17 @@ export default async function MemberDetail({ params, searchParams }: Props) {
     redirect("/admin/vip/login");
   }
 
+  const {memberId}=await params;
+  const query=await searchParams;
   const [member, periods, history, payments, telegramAccounts, reviewCases, safeguardingEvents, safeguardingTasks] = await Promise.all([
-    getMember(params.memberId),
-    getMemberPeriods(params.memberId),
-    getMemberHistory(params.memberId),
-    getMemberPayments(params.memberId),
-    getMemberTelegramAccounts(params.memberId),
-    getMemberReviewCases(params.memberId),
-    getMemberSafeguardingEvents(params.memberId),
-    getMemberSafeguardingTasks(params.memberId),
+    getMember(memberId),
+    getMemberPeriods(memberId),
+    getMemberHistory(memberId),
+    getMemberPayments(memberId),
+    getMemberTelegramAccounts(memberId),
+    getMemberReviewCases(memberId),
+    getMemberSafeguardingEvents(memberId),
+    getMemberSafeguardingTasks(memberId),
   ]);
 
   if (!member) notFound();
@@ -213,27 +215,27 @@ export default async function MemberDetail({ params, searchParams }: Props) {
           </div>
         </header>
 
-        {searchParams?.note === "saved" ? (
+        {query?.note === "saved" ? (
           <div className="mt-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
             Membership note saved. The change was also added to Activity &amp; Audit History.
           </div>
         ) : null}
 
-        {searchParams?.note === "too-long" ? (
+        {query?.note === "too-long" ? (
           <div className="mt-5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
             Membership notes can contain a maximum of 4,000 characters.
           </div>
         ) : null}
 
-        {searchParams?.action && ACTION_SUCCESS[searchParams.action] ? (
+        {query?.action && ACTION_SUCCESS[query.action] ? (
           <div className="mt-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-            {ACTION_SUCCESS[searchParams.action]}
+            {ACTION_SUCCESS[query.action]}
           </div>
         ) : null}
 
-        {searchParams?.actionError && ACTION_ERROR[searchParams.actionError] ? (
+        {query?.actionError && ACTION_ERROR[query.actionError] ? (
           <div className="mt-5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-            {ACTION_ERROR[searchParams.actionError]}
+            {ACTION_ERROR[query.actionError]}
           </div>
         ) : null}
 
