@@ -1,6 +1,7 @@
 import {csrfOK,form,session,trustedOrigin} from "../../../../_mi/auth";
 import {readQueue,writeQueue} from "../../../../_mi/review-queue";
 import {vipConfig,reserveVipSend,recordVipSend,sendMakeTest} from "../../../../_mi/vip-outbox";
+import {hostedQaIsolated} from "../../../../_mi/hosted-qa";
 import {EDITORIAL_SOURCE_EDITIONS} from "../../../../vip/market-intelligence/editions";
 export const dynamic="force-dynamic";
 const page="/admin/market-intelligence/queue";
@@ -10,6 +11,7 @@ export async function POST(req:Request){
  if(!token)return new Response("Unauthorized",{status:401});
  let data:URLSearchParams;
  try{data=await form(req,16384);if(!csrfOK(token,data.get("csrf")??""))return new Response("Forbidden",{status:403})}catch{return new Response("Forbidden",{status:403})}
+ if(process.env.CM_QA_WRITABLE_SANDBOX==="true"&&(!hostedQaIsolated()||process.env.CM_QA_SEND_WINDOW!=="ARMED_ONE_MESSAGE"||data.get("id")!==process.env.CM_QA_TEST_CANDIDATE_ID))return new Response("This private acceptance test is not authorised",{status:403});
  if(data.get("confirm")!=="yes")return back(req,"error=confirm");
  if(!vipConfig().enabled)return back(req,"error=vip_disabled");
  const get=(s:string)=>data.get(s)??"";

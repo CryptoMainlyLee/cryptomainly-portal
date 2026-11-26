@@ -2,10 +2,10 @@
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),vm=require("node:vm"),ts=require("typescript");
 const root=path.resolve(__dirname,".."),read=f=>fs.readFileSync(path.join(root,f),"utf8");
 const code=ts.transpileModule(read("app/_mi/hosted-qa.ts"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-const base={MI_MAKE_HOSTED_QA:"true",VERCEL:"1",VERCEL_ENV:"preview",MI_EDITORIAL_MODE:"preview",VERCEL_GIT_COMMIT_REF:"feature/mi-web-one-click-test-2026-11-21",VERCEL_GIT_REPO_SLUG:"cryptomainly-portal",MI_EDITORIAL_QA_BRANCH:"v135-hosted-web-e2e-20261121"};
+const base={CM_QA_WRITABLE_SANDBOX:"true",MI_MAKE_HOSTED_QA:"true",VERCEL:"1",VERCEL_ENV:"preview",MI_EDITORIAL_MODE:"preview",VERCEL_GIT_COMMIT_REF:"feature/mi-v135-next16-writable-test-2026-11-26",VERCEL_GIT_REPO_SLUG:"cryptomainly-portal",MI_EDITORIAL_QA_BRANCH:"v135-next16-test-20261126"};
 function qa(env){const out={};vm.runInNewContext(code,{exports:out,process:{env},require(name){if(name==="server-only")return {};throw Error("Unexpected "+name)}});return out;}
 let n=0;function ok(x,label){assert(x,label);n++;console.log("PASS",label)}
-ok(qa(base).hostedQaIsolated()===true&&qa(base).hostedQaStorageBranch()==="v135-hosted-web-e2e-20261121","Pinnned Preview+separate sandbox branch accepted");
+ok(qa(base).hostedQaIsolated()===true&&qa(base).hostedQaStorageBranch()==="v135-next16-test-20261126","Pinnned Preview+separate sandbox branch accepted");
 for(const [label,key,value] of [
 ["missing opt-in","MI_MAKE_HOSTED_QA",""],["no Vercel","VERCEL",""],["Production","VERCEL_ENV","production"],["local","VERCEL_ENV",""],["wrong editorial mode","MI_EDITORIAL_MODE","production"],
 ["wrong web branch","VERCEL_GIT_COMMIT_REF","main"],["wrong Git repo","VERCEL_GIT_REPO_SLUG","other-portal"],["wrong sandbox state branch","MI_EDITORIAL_QA_BRANCH","main"]

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/verify-mi-withdrawals.cjs && node scripts/verify-mi-next16-security-preview.cjs",
+    "prebuild": "node scripts/verify-mi-withdrawals.cjs && node scripts/verify-mi-next16-writable-qa.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint ."

@@ -1,5 +1,6 @@
 import {csrfOK,form,session,trustedOrigin} from "../../../../_mi/auth";
 import {approvalBlockers,readQueue,updateQueue,writeQueue} from "../../../../_mi/review-queue";
+import {hostedQaIsolated} from "../../../../_mi/hosted-qa";
 import {EDITORIAL_SOURCE_EDITIONS} from "../../../../vip/market-intelligence/editions";
 export const dynamic="force-dynamic";
 const route="/admin/market-intelligence/queue";
@@ -8,6 +9,7 @@ export async function POST(req:Request){
  const token=await session();if(!token)return new Response("Unauthorized",{status:401});
  let data:URLSearchParams;
  try{data=await form(req,16384);if(!csrfOK(token,data.get("csrf")??""))return new Response("Forbidden",{status:403})}catch{return new Response("Forbidden",{status:403})}
+ if(process.env.CM_QA_WRITABLE_SANDBOX==="true"&&(!hostedQaIsolated()||data.get("action")!=="edit"||data.get("id")!==process.env.CM_QA_TEST_CANDIDATE_ID))return new Response("Only the isolated test draft may be edited",{status:403});
  if(data.get("confirm")!=="yes")return redirect(req,"?error=confirm");
  try{
   const snap=await readQueue();
