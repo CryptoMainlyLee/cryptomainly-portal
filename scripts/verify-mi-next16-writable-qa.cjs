@@ -12,7 +12,7 @@ function verify(e){
  ["CM_QA_TEST_CANDIDATE_ID",CANDIDATE]
  ];
  const failures=checks.filter(([k,v])=>e[k]!==v).map(([k])=>k);
- if(typeof e.CM_ADMIN_PASSWORD!=="string"||!e.CM_ADMIN_PASSWORD.startsWith("QA16_")||e.CM_ADMIN_PASSWORD.length<64)failures.push("CM_ADMIN_PASSWORD");
+ if(typeof e.CM_ADMIN_PASSWORD!=="string"||e.CM_ADMIN_PASSWORD.length<24||e.CM_ADMIN_PASSWORD.length>256)failures.push("CM_ADMIN_PASSWORD");
  if(!e.MI_EDITORIAL_GITHUB_TOKEN||e.MI_EDITORIAL_GITHUB_TOKEN.length<30)failures.push("MI_EDITORIAL_GITHUB_TOKEN");
  if(e.SUPABASE_SERVICE_ROLE_KEY)failures.push("SUPABASE_SERVICE_ROLE_KEY");
  const sendArmed=e.MI_MAKE_TEST_ENABLED==="true";

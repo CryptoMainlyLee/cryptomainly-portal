@@ -14,6 +14,10 @@ function invoke(env,method,path){
  return o.proxy({method,nextUrl:{pathname:path,hostname:"127.0.0.1"}});
 }
 for(const e of [isolated,armed])check(gate.verify(e).ok===true,"Valid closed/armed environment");
+for(const env of [isolated,armed]){
+ check(gate.verify({...env,CM_ADMIN_PASSWORD:"Ab9!"+ "x".repeat(20)}).ok===true,"24-character QA password without forced prefix accepted");
+ for(const length of [23,257])check((()=>{try{gate.verify({...env,CM_ADMIN_PASSWORD:"x".repeat(length)});return false}catch{return true}})(),"Password outside QA length bounds rejected");
+}
 check(invoke({NODE_ENV:"production"},"POST","/admin/market-intelligence/session").status===200,"Offline synthetic local E2E can run without Vercel");
 check(invoke({NODE_ENV:"development"},"POST","/admin/market-intelligence/session").status===503,"Development mode cannot bypass writable QA");
 for(const broken of [{MI_EDITORIAL_QA_BRANCH:"main"},{MI_EDITORIAL_MODE:"production"},{SUPABASE_URL:"https://live.invalid"},{GOOGLE_SCRIPT_URL:"https://script.google.com"},{VERCEL_ENV:"production"},{MI_MAKE_DESTINATION:"LIVE"},{CM_ADMIN_PASSWORD:"bad"},{MI_EDITORIAL_GITHUB_TOKEN:""},{SUPABASE_SERVICE_ROLE_KEY:"secret"},{CM_QA_TEST_CANDIDATE_ID:"different"},{CM_QA_WRITABLE_SANDBOX:"false"}])check((()=>{try{gate.verify({...isolated,...broken});return false}catch{return true}})(),"Gate rejects incorrect setting");
