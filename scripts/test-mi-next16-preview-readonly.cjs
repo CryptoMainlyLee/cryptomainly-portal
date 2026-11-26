@@ -17,7 +17,7 @@ function run(env,method,path="/admin/market-intelligence/queue/send"){
  return exports.proxy({method,nextUrl:{pathname:path}});
 }
 const good={VERCEL_GIT_COMMIT_REF:BRANCH,CM_SECURITY_QA_READ_ONLY:"true",VERCEL_ENV:"preview"};
-for(const method of ["GET","HEAD"]){const r=run(good,method);assert.equal(r.status,200);checks++;}
+for(const method of ["GET","HEAD"]){const r=run(good,method);assert.equal(r.status,200);assert.equal(r.headers.get("X-Robots-Tag"),"noindex, nofollow, noarchive");checks+=2;}
 for(const method of ["POST","PUT","PATCH","DELETE","OPTIONS"]){const r=run(good,method);assert.equal(r.status,403);checks++;}
 for(const env of [{...good,VERCEL_ENV:"production"},{...good,CM_SECURITY_QA_READ_ONLY:"false"},{...good,VERCEL_GIT_COMMIT_REF:"main"}]){assert.equal(run(env,"GET").status,503);checks++;}
 assert.equal(run({VERCEL_ENV:"production",VERCEL_GIT_COMMIT_REF:"main"},"POST").status,200);checks++;

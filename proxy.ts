@@ -30,6 +30,7 @@ export function proxy(request: NextRequest) {
 
   const response = NextResponse.next();
   response.headers.set("X-CryptoMainly-QA", "read-only");
+  response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
   response.headers.set("Cache-Control", "no-store");
   return response;
 }
