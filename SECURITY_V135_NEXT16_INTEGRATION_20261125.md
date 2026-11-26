@@ -29,3 +29,13 @@
 4. Only after validated cloud QA should a separate planned Production release be considered. Actual VIP chat cutover and Make scenario activation require explicit separate approval.
 
 Last independently verified Production Vercel deployment: `dpl_7Fyai7GqvW61BpaDa1gUi1aoQ3iD`, SHA `045ddd1ed2a7fdc8a2d62baec72e3406b340ff57`; unchanged.
+
+## 26 November 2026 — cloud QA fail-closed preflight
+- Isolated branch retains previously verified Next16 scanner functionality and message #9 historical test evidence only. Never reuse the original send-enabled Preview URLs.
+- Added root `proxy.ts` for the exact branch `security/mi-v135-next16-integration-2026-11-25`; with matching `CM_SECURITY_QA_READ_ONLY=true` and `VERCEL_ENV=preview`, only GET/HEAD are permitted. All POST/PUT/PATCH/DELETE/OPTIONS (membership, Telegram, editorial, Google Sheets, server actions, login mutations) return HTTP 403. Inconsistent branch/environment/flag combinations return HTTP 503.
+- Added `scripts/verify-mi-next16-security-preview.cjs` to `prebuild`; cloud build refuses unless the exact Preview branch and repo identifiers, read-only flag, disabled Make/editorial modes, disabled Sheets/Make endpoint, invalid sentinel Supabase URL, QA-disabled chart PIN and branch-specific synthetic administrator password are present. Real Supabase service key, editorial GitHub token and Make API key must be absent.
+- Added pure `scripts/test-mi-next16-preview-readonly.cjs`; 24 safety checks passed. Next16 build passed with Proxy compiled. Nine targeted original security and delivery tests passed sequentially (including no-real-send E2E).
+- Existing Vercel project had shared Preview variables including CM_ADMIN_PASSWORD, SUPABASE_URL, MI_MAKE_WEBHOOK_URL, GOOGLE_SCRIPT_URL and NEXT_PUBLIC_CHART_PIN. Branch-specific overrides must be set before a successful QA deployment.
+- Vercel API will not accept branch-specific environment variables until the branch exists in the connected Git repository. Correct safe sequence: push this guard-only Git feature branch; allow initial prebuild to FAIL CLOSED without the overrides; then create exact branch-scoped Preview overrides and redeploy. No Production branch change, no VIP Telegram sends, and no real member writes permitted.
+- Unique synthetic QA password generated with Windows cryptographic RNG and stored ONLY as a DPAPI-protected user-local file under `%LOCALAPPDATA%\CryptoMainly\SecurityQA\V135-Next16-Preview-Admin.dpapi`. Do not copy or print its contents; it is not a real CryptoMainly/VIP password.
+- Remaining release gates: verify effective Vercel branch env and deployment state; smoke GET and ensure POST 403; keep Make inactive and Production unchanged; collect independent evidence before considering any future live release.
